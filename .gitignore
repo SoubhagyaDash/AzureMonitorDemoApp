@@ -1,0 +1,86 @@
+# General
+.DS_Store
+Thumbs.db
+.vscode/
+.env
+.env.*
+*.env
+*.log
+*.tmp
+*.swp
+*.swo
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Node
+node_modules/
+**/node_modules/
+
+# Frontend build outputs
+build/
+**/build/
+dist/
+**/dist/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# .NET
+bin/
+**/bin/
+obj/
+**/obj/
+
+# Java / Maven
+target/
+**/target/
+
+# Logs
+logs/
+**/logs/
+app-logs/
+current-logs/
+fresh-logs/
+latest-logs/
+
+# Terraform
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+terraform.tfstate.backup
+
+# Deployment secrets
+config/*.secrets.json
+deployment.env
+deployment.env.*
+deploy/*.secrets.json
+secrets/
+**/secrets/
+
+# IDE
+.idea/
+*.iml
+.project
+.settings/
+
+# Misc
+coverage/
+**/coverage/
+*.coverage
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Generated Azure artifacts
+**/deployments/**
+**/LogFiles/**

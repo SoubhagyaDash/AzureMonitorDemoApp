@@ -1,0 +1,121 @@
+const express = require('express');
+const path = require('path');
+const cors = require('cors');
+const fetch = require('node-fetch');
+
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+// Enable CORS for all origins
+app.use(cors());
+app.use(express.json());
+
+// API proxy endpoints to avoid CORS issues
+// Using private IPs for VNet integration
+const trimTrailingSlash = (value = '') => value.replace(/\/$/, '');
+
+const SERVICES = {
+  inventory: process.env.INVENTORY_SERVICE_URL || 'http://localhost:3001',
+  orders: process.env.ORDER_SERVICE_URL || '',
+  payment: process.env.PAYMENT_SERVICE_URL || '',
+  apiGateway: process.env.API_GATEWAY_URL || ''
+};
+
+const INVENTORY_API_BASE = `${trimTrailingSlash(SERVICES.inventory)}/api/inventory`;
+const ORDER_SERVICE_API_BASE = SERVICES.orders ? `${trimTrailingSlash(SERVICES.orders)}/api/orders` : '';
+const API_GATEWAY_ORDERS_BASE = SERVICES.apiGateway ? `${trimTrailingSlash(SERVICES.apiGateway)}/api/orders` : '';
+
+const fetchJsonOrThrow = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Request to ${url} failed with status ${response.status}: ${body}`);
+  }
+  return response.json();
+};
+
+// Proxy for inventory service
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const data = await fetchJsonOrThrow(INVENTORY_API_BASE);
+    res.json(data);
+  } catch (error) {
+    console.error('Inventory service error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Proxy for orders service - get customer orders
+app.get('/api/orders/customer/:customerId', async (req, res) => {
+  try {
+    if (ORDER_SERVICE_API_BASE) {
+      const data = await fetchJsonOrThrow(`${ORDER_SERVICE_API_BASE}/customer/${encodeURIComponent(req.params.customerId)}`);
+      res.json(data);
+      return;
+    }
+
+    if (!API_GATEWAY_ORDERS_BASE) {
+      res.status(502).json({ error: 'Order service endpoint is not configured.' });
+      return;
+    }
+
+    const orders = await fetchJsonOrThrow(API_GATEWAY_ORDERS_BASE);
+    const filtered = Array.isArray(orders)
+      ? orders.filter(order => order && order.customerId === req.params.customerId)
+      : [];
+    res.json(filtered);
+  } catch (error) {
+    console.error('Orders service error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Proxy for orders service - create order
+app.post('/api/orders/process', async (req, res) => {
+  try {
+    console.log('Processing order:', req.body);
+
+    let targetUrl = '';
+    if (API_GATEWAY_ORDERS_BASE) {
+      targetUrl = API_GATEWAY_ORDERS_BASE;
+    } else if (ORDER_SERVICE_API_BASE) {
+      targetUrl = `${ORDER_SERVICE_API_BASE}/process`;
+    } else {
+      res.status(502).json({ error: 'Order processing endpoint is not configured.' });
+      return;
+    }
+
+    const data = await fetchJsonOrThrow(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+
+    console.log('Order created:', data);
+    res.json(data);
+  } catch (error) {
+    console.error('Order creation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Serve static files from current directory
+app.use(express.static(__dirname));
+
+// Serve index.html for root
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`✓ eCommerce Frontend running on http://localhost:${PORT}`);
+  console.log(`✓ API Proxy enabled - proxying requests to:`);
+  console.log(`  - Inventory: ${INVENTORY_API_BASE}`);
+  if (ORDER_SERVICE_API_BASE) {
+    console.log(`  - Orders (Java service): ${ORDER_SERVICE_API_BASE}`);
+  }
+  if (API_GATEWAY_ORDERS_BASE) {
+    console.log(`  - Orders (API Gateway): ${API_GATEWAY_ORDERS_BASE}`);
+  }
+  console.log(`✓ Open http://localhost:${PORT} in your browser`);
+});

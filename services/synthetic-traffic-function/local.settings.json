@@ -1,0 +1,17 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "API_GATEWAY_URL": "http://localhost:5000",
+    "TRAFFIC_MIN_REQUESTS": "3",
+    "TRAFFIC_MAX_REQUESTS": "15",
+    "TRAFFIC_ERROR_RATE": "0.02",
+    "TRAFFIC_ENABLED_SCENARIOS": "Product Browsing,Shopping Cart,Order Processing,Health Monitoring"
+  },
+  "ConnectionStrings": {},
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "*"
+  }
+}

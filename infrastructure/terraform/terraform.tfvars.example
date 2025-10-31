@@ -1,0 +1,46 @@
+# Custom Environment Configuration
+# Example: Change these values to customize your deployment
+resource_group_name = "rg-my-otel-demo"        # Your custom RG name
+location           = "West US 2"                # Your preferred region  
+environment        = "production"               # Your environment
+project_name       = "my-otel-showcase"         # Your project name
+
+# AKS Configuration
+aks_node_count     = 3
+aks_vm_size        = "Standard_D2s_v3"
+kubernetes_version = "1.28"
+
+# VM Configuration
+vm_count      = 2
+vm_size       = "Standard_D2s_v3"
+admin_username = "azureuser"
+
+# Database Configuration
+sql_sku_name = "S1"
+sql_admin_username = "sqladmin"
+
+# Redis Configuration
+redis_sku_name = "Basic"
+redis_family   = "C"
+redis_capacity = 0
+
+# Cosmos DB Configuration
+cosmos_consistency_level = "Session"
+cosmos_throughput       = 400
+
+# EventHub Configuration
+eventhub_partition_count    = 4
+eventhub_message_retention = 1
+
+# Monitoring Configuration
+log_analytics_retention_days = 30
+application_insights_type    = "web"
+
+# Tags
+tags = {
+  Project     = "OpenTelemetry Demo"
+  Environment = "Development"
+  Owner       = "Platform Team"
+  Purpose     = "Azure Monitor OTel Showcase"
+  CostCenter  = "Engineering"
+}

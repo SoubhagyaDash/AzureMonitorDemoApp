@@ -1,0 +1,47 @@
+/* Service Health Styles */
+.service-health {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.service-card {
+  height: 100%;
+  transition: all 0.3s ease;
+  border-left: 4px solid #e0e0e0;
+}
+
+.service-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+
+.service-card.healthy {
+  border-left-color: #4caf50;
+}
+
+.service-card.healthy:hover {
+  border-left-color: #388e3c;
+}
+
+.service-card.unhealthy {
+  border-left-color: #ff9800;
+}
+
+.service-card.unhealthy:hover {
+  border-left-color: #f57c00;
+}
+
+.service-card.error {
+  border-left-color: #f44336;
+}
+
+.service-card.error:hover {
+  border-left-color: #d32f2f;
+}
+
+@media (max-width: 768px) {
+  .service-health {
+    padding: 10px;
+  }
+}

@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-processor
+  namespace: otel-demo
+  labels:
+    app: event-processor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: event-processor
+  template:
+    metadata:
+      labels:
+        app: event-processor
+    spec:
+      containers:
+      - name: event-processor
+        image: acroteldemodev1l009e.azurecr.io/event-processor:latest
+        ports:
+        - containerPort: 8001
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: application-insights-connection-string
+        - name: EVENT_HUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: eventhub-orders-connection-string
+        - name: EVENT_HUB_NAME
+          value: "orders"
+        - name: EVENT_HUB_CONSUMER_GROUP
+          value: "event-processor"
+        - name: COSMOS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: cosmos-endpoint
+        - name: COSMOS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: cosmos-key
+        - name: COSMOS_DATABASE
+          value: "EventStore"
+        - name: COSMOS_CONTAINER
+          value: "Events"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: redis-url
+        - name: FAILURE_INJECTION_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: otel-demo-shared
+              key: failure-injection-enabled
+        - name: OTEL_SERVICE_NAME
+          value: "event-processor"
+        - name: OTEL_SERVICE_VERSION
+          value: "1.0.0"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-processor
+  namespace: otel-demo
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "subnet-aks"
+spec:
+  selector:
+    app: event-processor
+  ports:
+  - port: 8001
+    targetPort: 8001
+  type: LoadBalancer

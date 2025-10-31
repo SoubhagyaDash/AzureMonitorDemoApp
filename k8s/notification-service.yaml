@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: otel-demo
+  labels:
+    app: notification-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+      - name: notification-service
+        image: acroteldemodev1l009e.azurecr.io/notification-service:latest
+        ports:
+        - containerPort: 8002
+        env:
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: appinsights-connection
+              key: connection-string
+        - name: OTEL_SERVICE_NAME
+          value: "notification-service"
+        - name: OTEL_SERVICE_VERSION
+          value: "1.0.0"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: otel-demo
+spec:
+  selector:
+    app: notification-service
+  ports:
+  - port: 8002
+    targetPort: 8002
+  type: ClusterIP

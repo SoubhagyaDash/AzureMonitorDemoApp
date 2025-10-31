@@ -1,0 +1,53 @@
+/* Metrics Dashboard Styles */
+.metrics-dashboard {
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.metrics-card {
+  height: 100%;
+  transition: all 0.3s ease;
+}
+
+.metrics-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 10px 0;
+}
+
+.metric-trend {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.9rem;
+}
+
+.trend-up {
+  color: #4caf50;
+}
+
+.trend-down {
+  color: #f44336;
+}
+
+.chart-container {
+  width: 100%;
+  height: 300px;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .metrics-dashboard {
+    padding: 10px;
+  }
+  
+  .chart-container {
+    height: 250px;
+  }
+}
