@@ -43,6 +43,12 @@ bin/
 **/bin/
 obj/
 **/obj/
+publish/
+**/publish/
+Release/
+**/Release/
+Debug/
+**/Debug/
 
 # Java / Maven
 target/

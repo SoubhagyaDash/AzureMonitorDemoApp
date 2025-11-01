@@ -1,14 +1,26 @@
-# Azure Monitor OpenTelemetry Demo# Azure Monitor OpenTelemetry Demo Application
+# Azure Monitor OpenTelemetry Demo Application
 
+This is a comprehensive demo application showcasing Azure Monitor's OpenTelemetry support across multiple languages and deployment scenarios. The environment is fully automated, with secrets kept out of source control and a single script that can stand up the entire stack on demand.
 
+## ⚠️ Security Notice
 
-This repository contains a multi-service e-commerce workload instrumented withThis is a comprehensive demo application showcasing Azure Monitor's OpenTelemetry support across multiple languages and deployment scenarios.
+**IMPORTANT:** This repository is configured to prevent accidental secret exposure:
 
-OpenTelemetry and deployed across Azure infrastructure. The environment is now
+- ✅ `.gitignore` excludes all sensitive files (`.env`, `.tfstate`, `.tfvars`, secrets, logs, etc.)
+- ✅ Example configuration files are provided (`.env.example`, `terraform.tfvars.example`)
+- ✅ Build artifacts and publish folders are excluded from version control
+- ❌ **NEVER commit** connection strings, passwords, API keys, or certificates
+- ❌ **NEVER commit** Terraform state files or variable files with real values
 
-fully automated, with secrets kept out of source control and a single script that## Architecture Overview
+**Before deploying:**
+1. Copy `infrastructure/terraform/terraform.tfvars.example` to `terraform.tfvars`
+2. Edit `terraform.tfvars` with your Azure resource names and regions
+3. Copy `services/frontend/.env.production.example` to `.env.production` (optional)
+4. Run the deployment script - secrets are injected at runtime from Terraform outputs
 
-can stand up the entire stack on demand.
+**All runtime secrets** (connection strings, keys, etc.) are pulled dynamically from Azure and never persisted to disk.
+
+## Architecture Overview
 
 The demo consists of:
 
