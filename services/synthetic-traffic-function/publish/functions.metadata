@@ -1,0 +1,98 @@
+[
+  {
+    "name": "GenerateTrafficTimer",
+    "scriptFile": "SyntheticTraffic.Function.dll",
+    "entryPoint": "SyntheticTraffic.Function.TrafficGeneratorFunction.GenerateTrafficTimer",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timer",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 */2 * * * *",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "GenerateTrafficHttp",
+    "scriptFile": "SyntheticTraffic.Function.dll",
+    "entryPoint": "SyntheticTraffic.Function.TrafficGeneratorFunction.GenerateTrafficHttp",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "GetTrafficStatus",
+    "scriptFile": "SyntheticTraffic.Function.dll",
+    "entryPoint": "SyntheticTraffic.Function.TrafficGeneratorFunction.GetTrafficStatus",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "ConfigureTrafficPattern",
+    "scriptFile": "SyntheticTraffic.Function.dll",
+    "entryPoint": "SyntheticTraffic.Function.TrafficGeneratorFunction.ConfigureTrafficPattern",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  }
+]

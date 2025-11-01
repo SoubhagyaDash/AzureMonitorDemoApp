@@ -1,19 +1,17 @@
 using Azure.Monitor.OpenTelemetry.AspNetCore;
-using ApiGateway.Models;
 using ApiGateway.Services;
-using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-
-// Configure Entity Framework
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // Register custom services
 builder.Services.AddScoped<IOrderService, OrderService>();
@@ -26,16 +24,19 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddHttpClient("OrderService", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:OrderService:BaseUrl"] ?? "http://localhost:8080");
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 builder.Services.AddHttpClient("InventoryService", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:InventoryService:BaseUrl"] ?? "http://localhost:3000");
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 builder.Services.AddHttpClient("PaymentService", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Services:PaymentService:BaseUrl"] ?? "http://localhost:5002");
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 // Configure Azure Monitor OpenTelemetry
@@ -71,12 +72,5 @@ app.MapControllers();
 
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
-
-// Create database if it doesn't exist
-using (var scope = app.Services.CreateScope())
-{
-    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    context.Database.EnsureCreated();
-}
 
 app.Run();

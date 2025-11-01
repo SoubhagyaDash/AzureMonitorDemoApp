@@ -41,7 +41,8 @@ resource "azurerm_kubernetes_cluster" "main" {
     azure_rbac_enabled     = true
   }
 
-  local_account_disabled = true
+  # Enable local accounts for easier deployment automation
+  local_account_disabled = false
 
   tags = var.tags
 }

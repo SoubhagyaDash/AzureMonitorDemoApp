@@ -114,4 +114,104 @@ public class OrderController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    // REST endpoints for API Gateway integration
+    @PostMapping
+    public ResponseEntity<OrderDetails> createOrder(@Valid @RequestBody OrderProcessingRequest request) {
+        logger.info("Creating order for customer: {}, product: {}", 
+                   request.getCustomerId(), request.getProductId());
+        
+        try {
+            OrderDetails order = orderProcessingService.processOrder(request);
+            logger.info("Successfully created order with ID: {}", order.getId());
+            return ResponseEntity.ok(order);
+        } catch (Exception e) {
+            logger.error("Error creating order: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @GetMapping
+    public ResponseEntity<List<OrderDetails>> getAllOrders() {
+        logger.info("Fetching all orders");
+        
+        try {
+            List<OrderDetails> orders = orderProcessingService.getAllOrders();
+            return ResponseEntity.ok(orders);
+        } catch (Exception e) {
+            logger.error("Error fetching all orders: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @GetMapping("/{orderId}")
+    public ResponseEntity<OrderDetails> getOrderById(@PathVariable Long orderId) {
+        logger.info("Fetching order by ID: {}", orderId);
+        
+        try {
+            OrderDetails order = orderProcessingService.getOrderById(orderId);
+            if (order != null) {
+                return ResponseEntity.ok(order);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            logger.error("Error fetching order {}: {}", orderId, e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PutMapping("/{orderId}/status")
+    public ResponseEntity<Void> updateOrderStatus(@PathVariable Long orderId, @RequestBody StatusUpdateRequest request) {
+        logger.info("Updating status for order {}: {}", orderId, request.getStatus());
+        
+        try {
+            boolean updated = orderProcessingService.updateOrderStatus(orderId, request.getStatus());
+            if (updated) {
+                return ResponseEntity.ok().build();
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            logger.error("Error updating order status for {}: {}", orderId, e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PutMapping("/{orderId}/payment")
+    public ResponseEntity<Void> updateOrderPayment(@PathVariable Long orderId, @RequestBody PaymentUpdateRequest request) {
+        logger.info("Updating payment for order {}: paymentId={}, status={}", 
+                   orderId, request.getPaymentId(), request.getPaymentStatus());
+        
+        try {
+            boolean updated = orderProcessingService.updateOrderPayment(
+                orderId, request.getPaymentId(), request.getPaymentStatus());
+            if (updated) {
+                return ResponseEntity.ok().build();
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            logger.error("Error updating order payment for {}: {}", orderId, e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // Request DTOs for update endpoints
+    public static class StatusUpdateRequest {
+        private String status;
+        
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+    }
+
+    public static class PaymentUpdateRequest {
+        private String paymentId;
+        private String paymentStatus;
+        
+        public String getPaymentId() { return paymentId; }
+        public void setPaymentId(String paymentId) { this.paymentId = paymentId; }
+        public String getPaymentStatus() { return paymentStatus; }
+        public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
+    }
 }

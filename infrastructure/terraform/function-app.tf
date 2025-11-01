@@ -14,7 +14,7 @@ resource "azurerm_service_plan" "traffic_function_plan" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
-  sku_name            = "Y1"
+  sku_name            = "B1"  # Basic tier to avoid Linux Consumption Plan limitation in mixed RG
 
   tags = var.tags
 }
@@ -41,7 +41,7 @@ resource "azurerm_linux_function_app" "traffic_generator" {
   }
 
   site_config {
-    always_on = false
+    always_on = true  # Required for Basic SKU and better for continuous traffic generation
     
     application_stack {
       dotnet_version              = "8.0"

@@ -31,7 +31,7 @@ public class CreateOrderRequest
     
     [Required]
     [Range(0.01, double.MaxValue)]
-    public decimal TotalAmount { get; set; }
+    public decimal UnitPrice { get; set; }
 }
 
 public class UpdateOrderStatusRequest

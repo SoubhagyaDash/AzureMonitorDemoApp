@@ -1,55 +1,34 @@
 import axios from 'axios';
 
 // API configuration
+// When empty, use same origin (proxied by server) - no localhost fallback
 const API_CONFIG = {
-  apiGateway: process.env.REACT_APP_API_GATEWAY_URL || 'http://localhost:5000/api',
-  orderService: process.env.REACT_APP_ORDER_SERVICE_URL || 'http://localhost:8080/api',
-  inventoryService: process.env.REACT_APP_INVENTORY_SERVICE_URL || 'http://localhost:3000/api',
-  paymentService: process.env.REACT_APP_PAYMENT_SERVICE_URL || 'http://localhost:5002/api',
-  eventProcessor: process.env.REACT_APP_EVENT_PROCESSOR_URL || 'http://localhost:8001/api',
-  notificationService: process.env.REACT_APP_NOTIFICATION_SERVICE_URL || 'http://localhost:8082/api'
+  apiGateway: process.env.REACT_APP_API_GATEWAY_URL || '',
+  inventoryService: process.env.REACT_APP_INVENTORY_SERVICE_URL || '',
+  eventProcessor: process.env.REACT_APP_EVENT_PROCESSOR_URL || '',
+  orderService: process.env.REACT_APP_ORDER_SERVICE_URL || '',
+  notificationService: process.env.REACT_APP_NOTIFICATION_SERVICE_URL || '',
+  paymentService: process.env.REACT_APP_PAYMENT_SERVICE_URL || ''
 };
 
 // Create axios instances for each service
-const apiGatewayClient = axios.create({
-  baseURL: API_CONFIG.apiGateway,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
+// Empty baseURL means use relative paths (same origin)
+const createClient = (baseURL) => {
+  return axios.create({
+    baseURL: baseURL || undefined, // undefined = relative URLs
+    timeout: 10000,
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+};
 
-const orderServiceClient = axios.create({
-  baseURL: API_CONFIG.orderService,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
-
-const inventoryServiceClient = axios.create({
-  baseURL: API_CONFIG.inventoryService,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
-
-const eventProcessorClient = axios.create({
-  baseURL: API_CONFIG.eventProcessor,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
-
-const notificationServiceClient = axios.create({
-  baseURL: API_CONFIG.notificationService,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
+const apiGatewayClient = createClient(API_CONFIG.apiGateway);
+const inventoryServiceClient = createClient(API_CONFIG.inventoryService);
+const eventProcessorClient = createClient(API_CONFIG.eventProcessor);
+const orderServiceClient = createClient(API_CONFIG.orderService);
+const notificationServiceClient = createClient(API_CONFIG.notificationService);
+const paymentServiceClient = createClient(API_CONFIG.paymentService);
 
 // Request interceptors for tracing
 const addTraceHeaders = (config) => {
@@ -60,24 +39,27 @@ const addTraceHeaders = (config) => {
   return config;
 };
 
-apiGatewayClient.interceptors.request.use(addTraceHeaders);
-orderServiceClient.interceptors.request.use(addTraceHeaders);
-inventoryServiceClient.interceptors.request.use(addTraceHeaders);
-eventProcessorClient.interceptors.request.use(addTraceHeaders);
-notificationServiceClient.interceptors.request.use(addTraceHeaders);
+const attachInterceptors = (client) => {
+  if (!client) {
+    return;
+  }
 
-// Response interceptors for error handling
-const handleResponse = (response) => response;
-const handleError = (error) => {
-  console.error('API Error:', error);
-  return Promise.reject(error);
+  client.interceptors.request.use(addTraceHeaders);
+  client.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      console.error('API Error:', error);
+      return Promise.reject(error);
+    }
+  );
 };
 
-apiGatewayClient.interceptors.response.use(handleResponse, handleError);
-orderServiceClient.interceptors.response.use(handleResponse, handleError);
-inventoryServiceClient.interceptors.response.use(handleResponse, handleError);
-eventProcessorClient.interceptors.response.use(handleResponse, handleError);
-notificationServiceClient.interceptors.response.use(handleResponse, handleError);
+attachInterceptors(apiGatewayClient);
+attachInterceptors(orderServiceClient);
+attachInterceptors(inventoryServiceClient);
+attachInterceptors(eventProcessorClient);
+attachInterceptors(notificationServiceClient);
+attachInterceptors(paymentServiceClient);
 
 // Utility functions
 function generateCorrelationId() {
@@ -99,12 +81,24 @@ const api = {
   async getServiceStatus() {
     try {
       const services = [
-        { name: 'API Gateway', client: apiGatewayClient, endpoint: '/health' },
-        { name: 'Order Service', client: orderServiceClient, endpoint: '/api/orders/health' },
-        { name: 'Inventory Service', client: inventoryServiceClient, endpoint: '/health' },
-        { name: 'Event Processor', client: eventProcessorClient, endpoint: '/health' },
-        { name: 'Notification Service', client: notificationServiceClient, endpoint: '/health' }
+        { name: 'API Gateway', client: apiGatewayClient, endpoint: '/health' }
       ];
+
+      if (orderServiceClient) {
+        services.push({ name: 'Order Service', client: orderServiceClient, endpoint: '/api/orders/health' });
+      }
+
+      if (inventoryServiceClient) {
+        services.push({ name: 'Inventory Service', client: inventoryServiceClient, endpoint: '/health' });
+      }
+
+      if (eventProcessorClient) {
+        services.push({ name: 'Event Processor', client: eventProcessorClient, endpoint: '/health' });
+      }
+
+      if (notificationServiceClient) {
+        services.push({ name: 'Notification Service', client: notificationServiceClient, endpoint: '/health' });
+      }
 
       const results = await Promise.allSettled(
         services.map(async (service) => {
@@ -127,10 +121,23 @@ const api = {
         })
       );
 
-      return results.map((result, index) => ({
-        ...services[index],
-        ...result.value
-      }));
+      return results.map((result, index) => {
+        const service = services[index];
+
+        if (result.status === 'fulfilled') {
+          return {
+            ...service,
+            ...result.value
+          };
+        }
+
+        return {
+          ...service,
+          status: 'unhealthy',
+          error: result.reason?.message || 'Service check failed',
+          responseTime: 'N/A'
+        };
+      });
     } catch (error) {
       console.error('Error checking service status:', error);
       return [];
@@ -139,13 +146,15 @@ const api = {
 
   // Orders API
   async getOrders() {
-    const response = await apiGatewayClient.get('/api/orders');
+    const client = apiGatewayClient;
+    const response = await client.get('/api/orders');
     return response.data;
   },
 
   async getRecentOrders() {
     try {
-      const response = await apiGatewayClient.get('/api/orders');
+      const client = apiGatewayClient;
+      const response = await client.get('/api/orders');
       return response.data || [];
     } catch (error) {
       console.warn('Failed to fetch recent orders:', error);
@@ -154,28 +163,33 @@ const api = {
   },
 
   async createOrder(orderData) {
-    const response = await apiGatewayClient.post('/api/orders', orderData);
+    const client = apiGatewayClient;
+    const response = await client.post('/api/orders', orderData);
     return response.data;
   },
 
   async updateOrderStatus(orderId, status) {
-    const response = await apiGatewayClient.put(`/api/orders/${orderId}/status`, { status });
+    const client = apiGatewayClient;
+    const response = await client.put(`/api/orders/${orderId}/status`, { status });
     return response.data;
   },
 
-  // Inventory API
+  // Inventory API - Call directly (no API Gateway proxy exists for inventory)
   async getInventory() {
-    const response = await inventoryServiceClient.get('/api/inventory');
+    const client = inventoryServiceClient;
+    const response = await client.get('/api/inventory');
     return response.data;
   },
 
   async checkInventory(productId, quantity = 1) {
-    const response = await inventoryServiceClient.get(`/api/inventory/check/${productId}?quantity=${quantity}`);
+    const client = inventoryServiceClient;
+    const response = await client.get(`/api/inventory/check/${productId}?quantity=${quantity}`);
     return response.data;
   },
 
   async reserveInventory(productId, quantity) {
-    const response = await inventoryServiceClient.post('/api/inventory/reserve', {
+    const client = inventoryServiceClient;
+    const response = await client.post('/api/inventory/reserve', {
       productId,
       quantity
     });
@@ -184,38 +198,45 @@ const api = {
 
   // Order Service API (Java)
   async processOrder(orderData) {
-    const response = await orderServiceClient.post('/api/orders/process', orderData);
+    const client = orderServiceClient;
+    const response = await client.post('/api/orders/process', orderData);
     return response.data;
   },
 
   async processOrderAsync(orderData) {
-    const response = await orderServiceClient.post('/api/orders/process-async', orderData);
+    const client = orderServiceClient;
+    const response = await client.post('/api/orders/process-async', orderData);
     return response.data;
   },
 
   async validateOrder(orderId) {
-    const response = await orderServiceClient.post(`/api/orders/${orderId}/validate`);
+    const client = orderServiceClient;
+    const response = await client.post(`/api/orders/${orderId}/validate`);
     return response.data;
   },
 
   async processBulkOrders(orders) {
-    const response = await orderServiceClient.post('/api/orders/bulk-process', orders);
+    const client = orderServiceClient;
+    const response = await client.post('/api/orders/bulk-process', orders);
     return response.data;
   },
 
   // Event Processor API
   async startEventProcessing() {
-    const response = await eventProcessorClient.post('/start-processing');
+    const client = eventProcessorClient;
+    const response = await client.post('/start-processing');
     return response.data;
   },
 
   async configureFailureInjection(config) {
-    const response = await eventProcessorClient.post('/failure-injection', config);
+    const client = eventProcessorClient;
+    const response = await client.post('/failure-injection', config);
     return response.data;
   },
 
   async getEventProcessorMetrics() {
-    const response = await eventProcessorClient.get('/metrics');
+    const client = eventProcessorClient;
+    const response = await client.get('/metrics');
     return response.data;
   },
 
@@ -273,17 +294,20 @@ const api = {
 
   // Notifications API
   async createNotification(notificationData) {
-    const response = await notificationServiceClient.post('/api/v1/notifications', notificationData);
+    const client = notificationServiceClient;
+    const response = await client.post('/api/v1/notifications', notificationData);
     return response.data;
   },
 
   async getNotifications(customerId) {
-    const response = await notificationServiceClient.get(`/api/v1/notifications?customerId=${customerId}`);
+    const client = notificationServiceClient;
+    const response = await client.get(`/api/v1/notifications?customerId=${customerId}`);
     return response.data;
   },
 
   async sendBulkNotifications(notifications) {
-    const response = await notificationServiceClient.post('/api/v1/notifications/bulk', {
+    const client = notificationServiceClient;
+    const response = await client.post('/api/v1/notifications/bulk', {
       notifications
     });
     return response.data;
@@ -299,18 +323,39 @@ const api = {
       };
 
       if (service === 'all') {
-        const results = await Promise.allSettled([
-          inventoryServiceClient.get(endpoints.inventory),
-          eventProcessorClient.get(endpoints.eventProcessor)
+        const [inventoryResult, eventProcessorResult] = await Promise.allSettled([
+          inventoryServiceClient ? inventoryServiceClient.get(endpoints.inventory) : Promise.resolve(null),
+          eventProcessorClient ? eventProcessorClient.get(endpoints.eventProcessor) : Promise.resolve(null)
         ]);
 
-        return {
-          inventory: results[0].status === 'fulfilled' ? results[0].value.data : null,
-          eventProcessor: results[1].status === 'fulfilled' ? results[1].value.data : null
+        const extractData = (result) => {
+          if (result.status !== 'fulfilled' || !result.value) {
+            return null;
+          }
+          return result.value.data ?? result.value;
         };
-      } else if (endpoints[service]) {
-        const client = service === 'inventory' ? inventoryServiceClient : eventProcessorClient;
-        const response = await client.get(endpoints[service]);
+
+        return {
+          inventory: extractData(inventoryResult),
+          eventProcessor: extractData(eventProcessorResult)
+        };
+      }
+
+      if (service === 'inventory') {
+        const client = inventoryServiceClient;
+        const response = await client.get(endpoints.inventory);
+        return response.data;
+      }
+
+      if (service === 'orderService') {
+        const client = orderServiceClient;
+        const response = await client.get(endpoints.orderService);
+        return response.data;
+      }
+
+      if (service === 'eventProcessor') {
+        const client = eventProcessorClient;
+        const response = await client.get(endpoints.eventProcessor);
         return response.data;
       }
     } catch (error) {
@@ -322,27 +367,45 @@ const api = {
   // Payment operations
   processPayment: async (orderData) => {
     try {
-      // First create the order
-      const orderResponse = await apiGatewayClient.post('/orders', {
-        customerId: orderData.customerId,
-        items: orderData.items,
-        totalAmount: orderData.totalAmount
-      });
+      const client = apiGatewayClient;
 
-      const order = orderResponse.data;
+      // API Gateway expects one order per product
+      // Create orders for each item in cart
+      const orders = [];
+      for (const item of orderData.items) {
+        const orderPayload = {
+          customerId: orderData.customerId,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice
+        };
+        console.log('Creating order with payload:', orderPayload);
+        const orderResponse = await client.post('/api/orders', orderPayload);
+        orders.push(orderResponse.data);
+      }
 
-      // Then process payment
-      const paymentResponse = await apiGatewayClient.post('/payments', {
-        orderId: order.id,
+      // Use first order for payment (simplified)
+      const primaryOrder = orders[0];
+
+      // Process payment through API Gateway
+      const paymentPayload = {
+        orderId: primaryOrder.id.toString(),
         customerId: orderData.customerId,
         amount: orderData.totalAmount,
         currency: 'USD',
         paymentMethod: orderData.paymentMethod
-      });
-
+      };
+      
+      console.log('Processing payment with payload:', JSON.stringify(paymentPayload, null, 2));
+      console.log('Payment method details:', JSON.stringify(orderData.paymentMethod, null, 2));
+      
+      const paymentResponse = await client.post('/api/payments', paymentPayload);
       const payment = paymentResponse.data;
 
-      return { order, payment };
+      return { 
+        order: { ...primaryOrder, relatedOrders: orders },
+        payment
+      };
     } catch (error) {
       console.error('Error processing payment:', error);
       throw error;
@@ -351,7 +414,8 @@ const api = {
 
   getPayment: async (paymentId) => {
     try {
-      const response = await apiGatewayClient.get(`/payments/${paymentId}`);
+      const client = apiGatewayClient;
+      const response = await client.get(`/api/payments/${paymentId}`);
       return response.data;
     } catch (error) {
       console.error('Error fetching payment:', error);
@@ -361,7 +425,8 @@ const api = {
 
   getPaymentsByOrder: async (orderId) => {
     try {
-      const response = await apiGatewayClient.get(`/payments/order/${orderId}`);
+      const client = apiGatewayClient;
+      const response = await client.get(`/api/payments/order/${orderId}`);
       return response.data;
     } catch (error) {
       console.error('Error fetching payments for order:', error);
@@ -371,7 +436,8 @@ const api = {
 
   refundPayment: async (paymentId, amount, reason) => {
     try {
-      const response = await apiGatewayClient.post(`/payments/${paymentId}/refund`, {
+      const client = apiGatewayClient;
+      const response = await client.post(`/api/payments/${paymentId}/refund`, {
         amount,
         reason
       });
@@ -398,6 +464,9 @@ const api = {
   async updateFailureInjectionConfig(serviceKey, config) {
     try {
       const baseUrl = this.getServiceBaseUrl(serviceKey);
+      if (!baseUrl) {
+        throw new Error(`Failure injection endpoint for ${serviceKey} is not configured.`);
+      }
       const endpoint = serviceKey === 'event-processor' ? '/failure-injection' : '/api/failure-injection';
       
       const response = await fetch(`${baseUrl}${endpoint}`, {
@@ -423,6 +492,9 @@ const api = {
   async getFailureInjectionConfig(serviceKey) {
     try {
       const baseUrl = this.getServiceBaseUrl(serviceKey);
+      if (!baseUrl) {
+        throw new Error(`Failure injection endpoint for ${serviceKey} is not configured.`);
+      }
       const endpoint = serviceKey === 'event-processor' ? '/failure-injection' : '/api/failure-injection';
       
       const response = await fetch(`${baseUrl}${endpoint}`, {

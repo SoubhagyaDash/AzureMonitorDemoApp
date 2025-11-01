@@ -357,22 +357,35 @@ class EventProcessor:
         """Store processed event in Cosmos DB"""
         with tracer.start_as_current_span("store_processed_event") as child_span:
             try:
+                # Use OrderId from event data as unique identifier to prevent duplicates
+                order_id = event_data.get("OrderId", f"unknown_{int(time.time() * 1000)}")
+                
                 document = {
-                    "id": f"{event_type}_{int(time.time() * 1000)}_{random.randint(1000, 9999)}",
+                    "id": f"{event_type}_{order_id}",
                     "eventType": event_type,
                     "eventData": event_data,
                     "processedAt": datetime.utcnow().isoformat(),
                     "processingService": "event-processor"
                 }
                 
-                await self.cosmos_container.create_item(document)
+                # Use upsert to handle duplicate events gracefully (event replay from EventHub)
+                await self.cosmos_container.upsert_item(document)
                 child_span.set_attribute("cosmos.document_id", document["id"])
                 
-                logger.info("Event stored in Cosmos DB", document_id=document["id"])
+                logger.info("Event stored in Cosmos DB", document_id=document["id"], event_type=event_type, order_id=order_id)
                 
             except Exception as e:
-                child_span.record_exception(e)
-                logger.error("Failed to store event in Cosmos DB", error=str(e))
+                # Conflict errors on upsert indicate concurrent partition processing - this is expected
+                error_str = str(e)
+                if "Conflict" in error_str and "409" in error_str:
+                    logger.warning("Duplicate event already processed (concurrent partition)", 
+                                 document_id=f"{event_type}_{order_id}", 
+                                 event_type=event_type,
+                                 order_id=order_id)
+                    child_span.set_attribute("cosmos.duplicate_event", True)
+                else:
+                    child_span.record_exception(e)
+                    logger.error("Failed to store event in Cosmos DB", error=error_str, event_type=event_type)
 
     async def cache_event_summary(self, event_data: Dict[str, Any], event_type: str):
         """Cache event summary in Redis"""

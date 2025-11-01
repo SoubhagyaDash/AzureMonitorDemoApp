@@ -40,9 +40,11 @@ function App() {
 
   // Configure Application Insights with router history
   useEffect(() => {
-    reactPlugin.setGlobalContext({
-      history: { location, navigate }
-    });
+    if (reactPlugin && typeof reactPlugin.setGlobalContext === 'function') {
+      reactPlugin.setGlobalContext({
+        history: { location, navigate }
+      });
+    }
   }, [location, navigate]);
 
   const tabs = [

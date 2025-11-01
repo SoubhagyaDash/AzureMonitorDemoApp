@@ -106,7 +106,8 @@ public class OrdersController : ControllerBase
     {
         using var activity = ActivitySource.StartActivity("CreateOrder");
         activity?.SetTag("order.customer_id", request.CustomerId);
-        activity?.SetTag("order.total_amount", request.TotalAmount);
+        activity?.SetTag("order.unit_price", request.UnitPrice);
+        activity?.SetTag("order.quantity", request.Quantity);
 
         try
         {
@@ -123,6 +124,16 @@ public class OrdersController : ControllerBase
 
             // Create order
             var order = await _orderService.CreateOrderAsync(request);
+            
+            // Validate order was created successfully
+            if (order == null || order.Id <= 0)
+            {
+                _logger.LogError("Order creation failed - Order Service returned null or invalid order");
+                activity?.SetStatus(ActivityStatusCode.Error, "Order creation failed");
+                return StatusCode(500, "Failed to create order");
+            }
+            
+            _logger.LogInformation("Order {OrderId} created successfully by Order Service", order.Id);
             
             // Process payment
             var paymentRequest = new Services.PaymentRequest

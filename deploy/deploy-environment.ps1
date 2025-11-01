@@ -21,8 +21,10 @@ param(
     [string]$DockerTag = "latest",
     [switch]$SkipInfrastructure,
     [switch]$SkipContainers,
+    [switch]$SkipAKS,
     [switch]$SkipVmDeployment,
     [switch]$SkipFrontend,
+    [switch]$SkipFunctionApp,
     [switch]$IncludeNotificationService,
     [ValidateRange(60, 3600)]
     [int]$FrontendDeployTimeoutSeconds = 600,
@@ -304,6 +306,135 @@ if (-not $SkipContainers) {
     Write-Step "Skipping container build/publish"
 }
 
+# Deploy Order, Payment, and Event Processor services to AKS FIRST (to get NodePort URLs)
+if (-not $SkipAKS) {
+    $aksClusterName = $terraformOutput.aks_cluster_name.value
+    $aksNodeIp = $null
+    $orderServicePort = $null
+    $paymentServicePort = $null
+    $eventProcessorPort = $null
+
+    if (-not $aksClusterName) {
+        Write-Warning "AKS cluster name not found in Terraform outputs. Will use placeholder URLs for VM deployment."
+    } else {
+        Write-Step "Deploying services to AKS cluster: $aksClusterName"
+    
+    # Get AKS credentials
+    Write-Host "  → Configuring kubectl for AKS cluster" -ForegroundColor Yellow
+    az aks get-credentials --resource-group $resourceGroup --name $aksClusterName --overwrite-existing --admin | Out-Null
+    
+    # Create namespace
+    Write-Host "  → Creating otel-demo namespace" -ForegroundColor Yellow
+    kubectl create namespace otel-demo --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Create Kubernetes secret with connection strings
+    Write-Host "  → Creating secrets" -ForegroundColor Yellow
+    $secretData = @{
+        "application-insights-connection-string" = $appInsightsConnectionString
+        "spring-datasource-url" = "jdbc:sqlserver://$($sqlParts['Server']):1433;database=$($sqlParts['Database']);encrypt=true;trustServerCertificate=true;"
+        "spring-datasource-username" = $sqlParts['User Id']
+        "spring-datasource-password" = $sqlParts['Password']
+        "eventhub-orders-connection-string" = $connectionStrings.eventhub_orders
+        "eventhub-payments-connection-string" = $connectionStrings.eventhub_payments
+        "redis-connection-string" = $connectionStrings.redis
+        "redis-url" = $redisUrl
+        "cosmos-endpoint" = $cosmosParts['AccountEndpoint']
+        "cosmos-key" = $cosmosParts['AccountKey']
+        "failure-injection-enabled" = "false"
+    }
+    
+    $secretArgs = @("create", "secret", "generic", "otel-demo-shared", "--namespace=otel-demo")
+    foreach ($entry in $secretData.GetEnumerator()) {
+        $secretArgs += "--from-literal=$($entry.Key)=$($entry.Value)"
+    }
+    $secretArgs += "--dry-run=client"
+    $secretArgs += "-o"
+    $secretArgs += "yaml"
+    
+    kubectl @secretArgs | kubectl apply -f -
+    
+    # Update K8s manifests with correct ACR reference and apply
+    $k8sDir = Join-Path $repoRoot "k8s"
+    $tempManifestsDir = Join-Path ([System.IO.Path]::GetTempPath()) ("k8s-manifests-" + [System.Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tempManifestsDir | Out-Null
+    
+    try {
+        $servicesToDeploy = @("order-service", "payment-service", "event-processor")
+        if ($IncludeNotificationService) {
+            $servicesToDeploy += "notification-service"
+        }
+        
+        foreach ($serviceName in $servicesToDeploy) {
+            $sourceManifest = Join-Path $k8sDir "$serviceName.yaml"
+            if (-not (Test-Path $sourceManifest)) {
+                Write-Warning "Manifest not found: $sourceManifest"
+                continue
+            }
+            
+            Write-Host "  → Deploying $serviceName to AKS" -ForegroundColor Yellow
+            
+            # Read manifest and replace ACR placeholder with actual registry
+            $manifestContent = Get-Content $sourceManifest -Raw
+            $manifestContent = $manifestContent -replace '__ACR_LOGIN_SERVER__', $acrLoginServer
+            
+            $tempManifest = Join-Path $tempManifestsDir "$serviceName.yaml"
+            $manifestContent | Set-Content -Path $tempManifest -NoNewline
+            
+            kubectl apply -f $tempManifest
+            
+            # Force rollout restart to ensure latest image is pulled
+            kubectl rollout restart deployment/$serviceName -n otel-demo 2>$null
+        }
+        
+        Write-Host "  → Waiting for deployments to roll out..." -ForegroundColor Yellow
+        
+        # Wait for rollouts to complete
+        foreach ($serviceName in @("order-service", "payment-service", "event-processor")) {
+            Write-Host "    Waiting for $serviceName..." -ForegroundColor Gray
+            kubectl rollout status deployment/$serviceName -n otel-demo --timeout=5m 2>$null
+        }
+        
+        Start-Sleep -Seconds 5
+        
+        # Get AKS node IP for NodePort access (services are exposed via NodePort, not LoadBalancer)
+        Write-Host "  → Retrieving AKS node IP for service access" -ForegroundColor Yellow
+        $aksNodeIp = kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>$null
+        
+        if ($aksNodeIp) {
+            Write-Host "    AKS Node IP: $aksNodeIp" -ForegroundColor Green
+            
+            # Services are exposed via NodePort (defined in manifests)
+            $orderServicePort = kubectl get service order-service -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
+            $paymentServicePort = kubectl get service payment-service -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
+            $eventProcessorPort = kubectl get service event-processor -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
+            
+            $orderServiceUrl = "http://${aksNodeIp}:${orderServicePort}"
+            $paymentServiceUrl = "http://${aksNodeIp}:${paymentServicePort}"
+            $eventProcessorUrl = "http://${aksNodeIp}:${eventProcessorPort}"
+            
+            Write-Host "    Order Service: $orderServiceUrl" -ForegroundColor Green
+            Write-Host "    Payment Service: $paymentServiceUrl" -ForegroundColor Green
+            Write-Host "    Event Processor: $eventProcessorUrl" -ForegroundColor Green
+        } else {
+            Write-Warning "Could not retrieve AKS node IP. API Gateway will use placeholder URLs."
+        }
+        
+    } finally {
+        if (Test-Path $tempManifestsDir) {
+            Remove-Item $tempManifestsDir -Recurse -Force
+        }
+    }
+    }
+} else {
+    Write-Step "Skipping AKS deployment"
+    # Set variables to null so VM deployment knows AKS was skipped
+    $aksNodeIp = $null
+    $orderServicePort = $null
+    $paymentServicePort = $null
+    $eventProcessorPort = $null
+}
+
+# Now deploy to VMs with the actual AKS NodePort URLs
 if (-not $SkipVmDeployment) {
     if ($vmNames.Count -eq 0) {
         throw "No virtual machine outputs were found in Terraform state."
@@ -314,7 +445,7 @@ if (-not $SkipVmDeployment) {
     $inventoryVmIndex = 0
     $apiGatewayVmIndex = if ($vmNames.Count -gt 1) { 1 } else { 0 }
 
-    # Note: Order, Payment, and Event Processor services will be deployed to AKS
+    # Note: Order, Payment, and Event Processor services are deployed to AKS
 
     $vmServiceMap = @{}
     
@@ -334,16 +465,18 @@ if (-not $SkipVmDeployment) {
         $vmServiceMap[$apiGatewayVmIndex] = New-Object System.Collections.Generic.List[object]
     }
 
-    # Placeholder URLs - will be updated after AKS deployment
-    $aksOrderServiceUrl = "http://order-service.otel-demo.svc.cluster.local:8080"
-    $aksPaymentServiceUrl = "http://payment-service.otel-demo.svc.cluster.local:3000"
-    $inventoryBaseUrl = if ($inventoryServiceUrl) { $inventoryServiceUrl } else { "http://10.0.1.4:3001" }
+    # Use actual NodePort URLs from AKS deployment above, fallback to Kubernetes DNS if not available
+    $aksOrderServiceUrl = if ($orderServiceUrl) { $orderServiceUrl } else { "http://order-service.otel-demo.svc.cluster.local:8080" }
+    $aksPaymentServiceUrl = if ($paymentServiceUrl) { $paymentServiceUrl } else { "http://payment-service.otel-demo.svc.cluster.local:3000" }
+    # Use inventory service URL from service discovery, fallback to VM1 private IP
+    $inventoryBaseUrl = if ($inventoryServiceUrl) { $inventoryServiceUrl } else { "http://${inventoryVmPrivateIp}:3001" }
 
+    # API Gateway Configuration - Acts as orchestrator calling downstream services
+    # NO direct database access - calls Order Service for order operations
     $vmServiceMap[$apiGatewayVmIndex].Add((New-ServiceConfig -Name "api-gateway" -Image "$containerImagePrefix/api-gateway:$DockerTag" -UseHostNetwork $true -Environment @{
         "ASPNETCORE_ENVIRONMENT" = "Production"
         "ASPNETCORE_URLS" = "http://+:5000"
         "ApplicationInsights__ConnectionString" = $appInsightsConnectionString
-        "ConnectionStrings__DefaultConnection" = $connectionStrings.sql_database
         "Redis__ConnectionString" = $connectionStrings.redis
         "EventHub__ConnectionString" = $connectionStrings.eventhub_orders
         "EventHub__Name" = "orders"
@@ -368,11 +501,11 @@ if (-not $SkipVmDeployment) {
         $scriptLines.Add("  systemctl enable docker >/dev/null 2>&1 || true")
         $scriptLines.Add("  systemctl start docker >/dev/null 2>&1 || true")
         $scriptLines.Add("fi")
-    $scriptLines.Add(': "${acrPasswordBase64:?ACR registry password was not supplied}"')
-    $scriptLines.Add("acrPassword=$(printf '%s' \"$acrPasswordBase64\" | base64 --decode)")
-    $scriptLines.Add("unset acrPasswordBase64")
-    $scriptLines.Add(('printf ''%s'' "$acrPassword" | docker login {0} --username {1} --password-stdin >/dev/null' -f $acrLoginServer, $acrAdminUsername))
-    $scriptLines.Add("unset acrPassword")
+        $scriptLines.Add(': "${acrPasswordBase64:?ACR registry password was not supplied}"')
+        $scriptLines.Add('acrPassword=$(printf "%s" "$acrPasswordBase64" | base64 --decode)')
+        $scriptLines.Add("unset acrPasswordBase64")
+        $scriptLines.Add("printf '%s' `"`$acrPassword`" | docker login $acrLoginServer --username $acrAdminUsername --password-stdin >/dev/null")
+        $scriptLines.Add("unset acrPassword")
 
         foreach ($service in $vmServiceMap[$vmIndex]) {
             $scriptLines.Add("echo 'Deploying $($service.Name)'")
@@ -430,179 +563,34 @@ if (-not $SkipVmDeployment) {
     Write-Step "Skipping VM container deployment"
 }
 
-# Deploy Order, Payment, and Event Processor services to AKS
-$aksClusterName = $terraformOutput.aks_cluster_name.value
-if (-not $aksClusterName) {
-    Write-Warning "AKS cluster name not found in Terraform outputs. Skipping AKS deployment."
-} else {
-    Write-Step "Deploying services to AKS cluster: $aksClusterName"
-    
-    # Get AKS credentials
-    Write-Host "  → Configuring kubectl for AKS cluster" -ForegroundColor Yellow
-    az aks get-credentials --resource-group $resourceGroup --name $aksClusterName --overwrite-existing --admin | Out-Null
-    
-    # Create namespace
-    Write-Host "  → Creating otel-demo namespace" -ForegroundColor Yellow
-    kubectl create namespace otel-demo --dry-run=client -o yaml | kubectl apply -f -
-    
-    # Create Kubernetes secret with connection strings
-    Write-Host "  → Creating secrets" -ForegroundColor Yellow
-    $secretData = @{
-        "application-insights-connection-string" = $appInsightsConnectionString
-        "spring-datasource-url" = "jdbc:sqlserver://$($sqlParts['Server']):1433;database=$($sqlParts['Database']);encrypt=true;trustServerCertificate=true;"
-        "spring-datasource-username" = $sqlParts['User Id']
-        "spring-datasource-password" = $sqlParts['Password']
-        "eventhub-orders-connection-string" = $connectionStrings.eventhub_orders
-        "eventhub-payments-connection-string" = $connectionStrings.eventhub_payments
-        "redis-connection-string" = $connectionStrings.redis
-        "redis-url" = $redisUrl
-        "cosmos-endpoint" = $cosmosParts['AccountEndpoint']
-        "cosmos-key" = $cosmosParts['AccountKey']
-        "failure-injection-enabled" = "false"
-    }
-    
-    $secretArgs = @("create", "secret", "generic", "otel-demo-shared", "--namespace=otel-demo")
-    foreach ($entry in $secretData.GetEnumerator()) {
-        $secretArgs += "--from-literal=$($entry.Key)=$($entry.Value)"
-    }
-    $secretArgs += "--dry-run=client"
-    $secretArgs += "-o"
-    $secretArgs += "yaml"
-    
-    kubectl @secretArgs | kubectl apply -f -
-    
-    # Update K8s manifests with correct ACR reference and apply
-    $k8sDir = Join-Path $repoRoot "k8s"
-    $tempManifestsDir = Join-Path ([System.IO.Path]::GetTempPath()) ("k8s-manifests-" + [System.Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $tempManifestsDir | Out-Null
-    
-    try {
-        $servicesToDeploy = @("order-service", "payment-service", "event-processor")
-        if ($IncludeNotificationService) {
-            $servicesToDeploy += "notification-service"
-        }
-        
-        foreach ($serviceName in $servicesToDeploy) {
-            $sourceManifest = Join-Path $k8sDir "$serviceName.yaml"
-            if (-not (Test-Path $sourceManifest)) {
-                Write-Warning "Manifest not found: $sourceManifest"
-                continue
-            }
-            
-            Write-Host "  → Deploying $serviceName to AKS" -ForegroundColor Yellow
-            
-            # Read manifest and replace image reference
-            $manifestContent = Get-Content $sourceManifest -Raw
-            $manifestContent = $manifestContent -replace 'image:\s*acroteldemodev1l009e\.azurecr\.io/[^:]+:latest', "image: $containerImagePrefix/$($serviceName):$DockerTag"
-            
-            $tempManifest = Join-Path $tempManifestsDir "$serviceName.yaml"
-            $manifestContent | Set-Content -Path $tempManifest -NoNewline
-            
-            kubectl apply -f $tempManifest
-        }
-        
-        Write-Host "  → Waiting for services to be ready..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 10
-        
-        # Get service IPs
-        Write-Host "  → Retrieving AKS service endpoints" -ForegroundColor Yellow
-        $orderServiceIp = kubectl get service order-service -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-        $paymentServiceIp = kubectl get service payment-service -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-        $eventProcessorIp = kubectl get service event-processor -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-        
-        # Wait for load balancer IPs to be assigned (up to 3 minutes)
-        $maxWaitSeconds = 180
-        $waitInterval = 10
-        $elapsed = 0
-        
-        while ((-not $orderServiceIp -or -not $paymentServiceIp) -and $elapsed -lt $maxWaitSeconds) {
-            Write-Host "    Waiting for load balancer IPs to be assigned... ($elapsed/$maxWaitSeconds seconds)" -ForegroundColor Yellow
-            Start-Sleep -Seconds $waitInterval
-            $elapsed += $waitInterval
-            
-            if (-not $orderServiceIp) {
-                $orderServiceIp = kubectl get service order-service -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-            }
-            if (-not $paymentServiceIp) {
-                $paymentServiceIp = kubectl get service payment-service -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-            }
-            if (-not $eventProcessorIp) {
-                $eventProcessorIp = kubectl get service event-processor -n otel-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>$null
-            }
-        }
-        
-        if ($orderServiceIp) { Write-Host "    Order Service: http://${orderServiceIp}:8080" -ForegroundColor Green }
-        if ($paymentServiceIp) { Write-Host "    Payment Service: http://${paymentServiceIp}:3000" -ForegroundColor Green }
-        if ($eventProcessorIp) { Write-Host "    Event Processor: http://${eventProcessorIp}:8001" -ForegroundColor Green }
-        
-        # Update API Gateway with actual AKS service IPs
-        if ($orderServiceIp -and $paymentServiceIp) {
-            Write-Host "  → Updating API Gateway with AKS service endpoints" -ForegroundColor Yellow
-            
-            $aksOrderServiceUrl = "http://${orderServiceIp}:8080"
-            $aksPaymentServiceUrl = "http://${paymentServiceIp}:3000"
-            
-            $apiGatewayUpdateScript = @"
-#!/bin/bash
-set -euo pipefail
-echo 'Updating API Gateway configuration'
-docker stop api-gateway >/dev/null 2>&1 || true
-docker rm api-gateway >/dev/null 2>&1 || true
-docker run -d \
-  --name api-gateway \
-  --restart unless-stopped \
-  --network host \
-  -e ASPNETCORE_ENVIRONMENT='Production' \
-  -e ASPNETCORE_URLS='http://+:5000' \
-  -e ApplicationInsights__ConnectionString='$appInsightsConnectionString' \
-  -e ConnectionStrings__DefaultConnection='$($connectionStrings.sql_database)' \
-  -e Redis__ConnectionString='$($connectionStrings.redis)' \
-  -e EventHub__ConnectionString='$($connectionStrings.eventhub_orders)' \
-  -e EventHub__Name='orders' \
-  -e Services__OrderService__BaseUrl='$aksOrderServiceUrl' \
-  -e Services__InventoryService__BaseUrl='$inventoryBaseUrl' \
-  -e Services__PaymentService__BaseUrl='$aksPaymentServiceUrl' \
-  -e FailureInjection__Enabled='false' \
-  $containerImagePrefix/api-gateway:$DockerTag
-echo 'API Gateway updated with AKS endpoints'
-"@
-            
-            az vm run-command invoke `
-                --resource-group $resourceGroup `
-                --name $vmNames[$apiGatewayVmIndex] `
-                --command-id RunShellScript `
-                --scripts $apiGatewayUpdateScript | Out-Null
-        } else {
-            Write-Warning "Could not retrieve AKS service IPs. API Gateway may not be able to reach AKS services."
-        }
-        
-    } finally {
-        if (Test-Path $tempManifestsDir) {
-            Remove-Item $tempManifestsDir -Recurse -Force
-        }
-    }
-}
-
 # Update Frontend App Service settings with actual service endpoints
 if ($frontendWebAppName) {
     Write-Step "Configuring frontend App Service with service endpoints"
     
-    # Use AKS service IPs if available, otherwise fallback to configured URLs
+    # Frontend should ONLY use API Gateway - not call backend services directly
+    # API Gateway orchestrates calls to Order, Payment, Event Processor services
     $finalApiGatewayUrl = $apiGatewayUrl
     $finalInventoryUrl = $inventoryServiceUrl
-    $finalOrderUrl = if ($orderServiceIp) { "http://${orderServiceIp}:8080" } else { $orderServiceUrl }
-    $finalPaymentUrl = if ($paymentServiceIp) { "http://${paymentServiceIp}:3000" } else { $paymentServiceUrl }
-    $finalEventProcessorUrl = if ($eventProcessorIp) { "http://${eventProcessorIp}:8001" } else { $eventProcessorUrl }
     
     $frontendAppSettings = [ordered]@{}
     if ($finalApiGatewayUrl) { 
         $frontendAppSettings["API_GATEWAY_URL"] = $finalApiGatewayUrl 
         $frontendAppSettings["REACT_APP_API_GATEWAY_URL"] = $finalApiGatewayUrl
     }
-    if ($finalInventoryUrl) { $frontendAppSettings["INVENTORY_SERVICE_URL"] = $finalInventoryUrl }
-    if ($finalOrderUrl) { $frontendAppSettings["ORDER_SERVICE_URL"] = $finalOrderUrl }
-    if ($finalPaymentUrl) { $frontendAppSettings["PAYMENT_SERVICE_URL"] = $finalPaymentUrl }
-    if ($finalEventProcessorUrl) { $frontendAppSettings["EVENT_PROCESSOR_URL"] = $finalEventProcessorUrl }
+    # Only set Inventory Service URL if frontend needs direct inventory queries
+    if ($finalInventoryUrl) { 
+        $frontendAppSettings["INVENTORY_SERVICE_URL"] = $finalInventoryUrl 
+        $frontendAppSettings["REACT_APP_INVENTORY_SERVICE_URL"] = $finalInventoryUrl
+    }
+    # DO NOT set ORDER_SERVICE_URL, PAYMENT_SERVICE_URL, EVENT_PROCESSOR_URL
+    # Frontend should route all order/payment requests through API Gateway
+    
+    # Add Application Insights for frontend telemetry
+    if ($appInsightsConnectionString) {
+        $frontendAppSettings["APPLICATIONINSIGHTS_CONNECTION_STRING"] = $appInsightsConnectionString
+    }
+    
+    # VNet integration settings
     $frontendAppSettings["WEBSITE_VNET_ROUTE_ALL"] = "1"
     $frontendAppSettings["WEBSITE_DNS_SERVER"] = "168.63.129.16"
     
@@ -681,6 +669,62 @@ if (-not $SkipFrontend) {
     }
 } else {
     Write-Step "Skipping frontend deployment"
+}
+
+# Deploy Synthetic Traffic Function App
+if (-not $SkipFunctionApp) {
+    $trafficFunctionAppName = $terraformOutput.traffic_function_app_name.value
+    if ($trafficFunctionAppName) {
+    Require-Tool -Tool "dotnet"
+    Write-Step "Deploying Synthetic Traffic Function App"
+    
+    $functionSource = Join-Path $repoRoot "services/synthetic-traffic-function"
+    if (-not (Test-Path $functionSource)) {
+        Write-Warning "Synthetic traffic function source not found at $functionSource. Skipping."
+    } else {
+        $functionPublishDir = Join-Path ([System.IO.Path]::GetTempPath()) ("function-publish-" + [System.Guid]::NewGuid().ToString("N"))
+        $functionZip = Join-Path ([System.IO.Path]::GetTempPath()) ("function-deploy-" + [System.Guid]::NewGuid().ToString("N") + ".zip")
+        
+        if (Test-Path $functionZip) { Remove-Item $functionZip -Force }
+        if (Test-Path $functionPublishDir) { Remove-Item $functionPublishDir -Recurse -Force }
+        
+        try {
+            Write-Host "  Building and publishing .NET function app..." -ForegroundColor Yellow
+            Push-Location $functionSource
+            try {
+                # Publish the function app to a temporary directory
+                dotnet publish --configuration Release --output $functionPublishDir | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "dotnet publish failed with exit code $LASTEXITCODE"
+                }
+            } finally {
+                Pop-Location
+            }
+            
+            Write-Host "  Creating deployment package..." -ForegroundColor Yellow
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($functionPublishDir, $functionZip)
+            
+            Write-Host "  Deploying to Azure Function App '$trafficFunctionAppName'..." -ForegroundColor Yellow
+            az functionapp deployment source config-zip `
+                --resource-group $resourceGroup `
+                --name $trafficFunctionAppName `
+                --src $functionZip `
+                --timeout 600 | Out-Null
+            
+            Write-Host "  Function app deployed successfully" -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to deploy synthetic traffic function: $($_.Exception.Message)"
+        } finally {
+            if (Test-Path $functionZip) { Remove-Item $functionZip -Force }
+            if (Test-Path $functionPublishDir) { Remove-Item $functionPublishDir -Recurse -Force }
+        }
+    }
+    } else {
+        Write-Host "Synthetic traffic function app not found in Terraform outputs. Skipping." -ForegroundColor Yellow
+    }
+} else {
+    Write-Step "Skipping function app deployment"
 }
 
 Write-Step "Deployment summary"

@@ -2,9 +2,16 @@
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Environment files with secrets - NEVER commit these
 .env
 .env.*
+!.env.example
+!.env.*.example
 *.env
+services/frontend/.env.production
+
+# Archives and logs
 *.log
 *.tmp
 *.swp

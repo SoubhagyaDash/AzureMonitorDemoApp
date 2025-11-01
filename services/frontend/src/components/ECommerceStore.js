@@ -55,6 +55,19 @@ const ECommerceStore = ({ onNotification }) => {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [wsConnection, setWsConnection] = useState(null);
+  
+  // Checkout form state
+  const [shippingInfo, setShippingInfo] = useState({
+    address: '123 Main St',
+    city: 'Seattle',
+    zipCode: '98101'
+  });
+  
+  const [paymentInfo, setPaymentInfo] = useState({
+    cardNumber: '**** **** **** 1234',
+    expiryDate: '12/26',
+    cvv: '123'
+  });
 
   const customers = [
     { id: 'customer-001', name: 'John Doe', email: 'john@example.com' },
@@ -64,7 +77,8 @@ const ECommerceStore = ({ onNotification }) => {
     { id: 'customer-005', name: 'Charlie Wilson', email: 'charlie@example.com' }
   ];
 
-  const checkoutSteps = ['Cart Review', 'Shipping Info', 'Payment', 'Confirmation'];
+  const checkoutSteps = ['Cart Review', 'Shipping Info', 'Payment'];
+  const [orderPlaced, setOrderPlaced] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -85,10 +99,11 @@ const ECommerceStore = ({ onNotification }) => {
   }, []);
 
   useEffect(() => {
-    // Track customer selection
+    // Track customer selection and reload orders for the new customer
     telemetry.trackUserAction('CustomerSelected', selectedCustomer, {
       previousCustomer: selectedCustomer
     });
+    loadOrders();
   }, [selectedCustomer]);
 
   const loadProducts = async () => {
@@ -121,7 +136,9 @@ const ECommerceStore = ({ onNotification }) => {
   const loadOrders = async () => {
     try {
       const ordersData = await api.getOrders();
-      setOrders(ordersData);
+      // Filter orders for the selected customer
+      const customerOrders = ordersData.filter(order => order.customerId === selectedCustomer);
+      setOrders(customerOrders);
     } catch (error) {
       console.error('Error loading orders:', error);
     }
@@ -129,7 +146,14 @@ const ECommerceStore = ({ onNotification }) => {
 
   const connectWebSocket = () => {
     try {
-      const notificationServiceUrl = process.env.REACT_APP_NOTIFICATION_SERVICE_URL || 'ws://localhost:9000';
+      const notificationServiceUrl = process.env.REACT_APP_NOTIFICATION_SERVICE_URL;
+      
+      // Skip WebSocket if notification service URL is not configured
+      if (!notificationServiceUrl) {
+        console.log('Notification service not configured, skipping WebSocket connection');
+        return;
+      }
+      
       const ws = new WebSocket(`${notificationServiceUrl}/ws?customerId=${selectedCustomer}`);
       
       ws.onopen = () => {
@@ -298,10 +322,9 @@ const ECommerceStore = ({ onNotification }) => {
       
       setOrders([...orders, result.order]);
       
-      // Clear cart
-      setCart([]);
-      setCheckoutOpen(false);
-      setActiveStep(0);
+      // Mark order as placed and show confirmation
+      setOrderPlaced(true);
+      setActiveStep(3); // Move to confirmation step
 
       const duration = performance.now() - startTime;
       
@@ -393,6 +416,17 @@ const ECommerceStore = ({ onNotification }) => {
   };
 
   const getStepContent = (step) => {
+    // Show confirmation if order was placed
+    if (orderPlaced) {
+      return (
+        <Box sx={{ p: 2, textAlign: 'center' }}>
+          <CheckCircleIcon sx={{ fontSize: 60, color: 'green', mb: 2 }} />
+          <Typography variant="h6">Order Confirmed!</Typography>
+          <Typography>Your orders have been placed successfully.</Typography>
+        </Box>
+      );
+    }
+
     switch (step) {
       case 0:
         return (
@@ -427,16 +461,8 @@ const ECommerceStore = ({ onNotification }) => {
           <Box sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>Payment Information</Typography>
             <TextField fullWidth label="Card Number" margin="normal" defaultValue="**** **** **** 1234" />
-            <TextField fullWidth label="Expiry Date" margin="normal" defaultValue="12/25" />
-            <TextField fullWidth label="CVV" margin="normal" defaultValue="123" />
-          </Box>
-        );
-      case 3:
-        return (
-          <Box sx={{ p: 2, textAlign: 'center' }}>
-            <CheckCircleIcon sx={{ fontSize: 60, color: 'green', mb: 2 }} />
-            <Typography variant="h6">Order Confirmed!</Typography>
-            <Typography>Your orders have been placed successfully.</Typography>
+            <TextField fullWidth label="Expiry Date (MM/YY)" margin="normal" defaultValue="12/26" />
+            <TextField fullWidth label="CVV" margin="normal" defaultValue="123" type="password" />
           </Box>
         );
       default:
@@ -567,7 +593,14 @@ const ECommerceStore = ({ onNotification }) => {
       {/* Checkout Dialog */}
       <Dialog
         open={checkoutOpen}
-        onClose={() => setCheckoutOpen(false)}
+        onClose={() => {
+          setCheckoutOpen(false);
+          setActiveStep(0);
+          setOrderPlaced(false);
+          if (orderPlaced) {
+            setCart([]);
+          }
+        }}
         maxWidth="md"
         fullWidth
       >
@@ -583,18 +616,31 @@ const ECommerceStore = ({ onNotification }) => {
           {getStepContent(activeStep)}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCheckoutOpen(false)}>Cancel</Button>
-          <Button onClick={handleBack} disabled={activeStep === 0}>
-            Back
+          <Button onClick={() => {
+            setCheckoutOpen(false);
+            setActiveStep(0);
+            setOrderPlaced(false);
+            if (orderPlaced) {
+              setCart([]);
+            }
+          }}>
+            {orderPlaced ? 'Close' : 'Cancel'}
           </Button>
-          <Button
-            onClick={handleNext}
-            variant="contained"
-            disabled={loading}
-            startIcon={loading ? <CircularProgress size={20} /> : null}
-          >
-            {activeStep === checkoutSteps.length - 1 ? 'Place Order' : 'Next'}
-          </Button>
+          {!orderPlaced && (
+            <>
+              <Button onClick={handleBack} disabled={activeStep === 0}>
+                Back
+              </Button>
+              <Button
+                onClick={handleNext}
+                variant="contained"
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={20} /> : null}
+              >
+                {activeStep === checkoutSteps.length - 1 ? 'Place Order' : 'Next'}
+              </Button>
+            </>
+          )}
         </DialogActions>
       </Dialog>
     </Box>

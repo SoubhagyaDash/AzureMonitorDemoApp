@@ -134,6 +134,53 @@ public class OrderProcessingService {
         logger.info("Bulk order processing completed");
     }
 
+    // Additional methods for API Gateway integration
+    public List<OrderDetails> getAllOrders() {
+        logger.info("Fetching all orders");
+        failureInjectionService.maybeInjectFailure("getAllOrders");
+        return orderRepository.findAll();
+    }
+
+    public OrderDetails getOrderById(Long orderId) {
+        logger.info("Fetching order by ID: {}", orderId);
+        failureInjectionService.maybeInjectFailure("getOrderById");
+        return orderRepository.findById(orderId).orElse(null);
+    }
+
+    public boolean updateOrderStatus(Long orderId, String status) {
+        logger.info("Updating order {} status to: {}", orderId, status);
+        
+        return orderRepository.findById(orderId)
+                .map(order -> {
+                    order.setStatus(status);
+                    orderRepository.save(order);
+                    logger.info("Order {} status updated successfully", orderId);
+                    return true;
+                })
+                .orElseGet(() -> {
+                    logger.warn("Order {} not found for status update", orderId);
+                    return false;
+                });
+    }
+
+    public boolean updateOrderPayment(Long orderId, String paymentId, String paymentStatus) {
+        logger.info("Updating order {} payment: paymentId={}, status={}", 
+                   orderId, paymentId, paymentStatus);
+        
+        return orderRepository.findById(orderId)
+                .map(order -> {
+                    order.setPaymentId(paymentId);
+                    order.setPaymentStatus(paymentStatus);
+                    orderRepository.save(order);
+                    logger.info("Order {} payment updated successfully", orderId);
+                    return true;
+                })
+                .orElseGet(() -> {
+                    logger.warn("Order {} not found for payment update", orderId);
+                    return false;
+                });
+    }
+
     private void simulateProcessingTime(String priority) {
         try {
             int baseDelay = switch (priority) {

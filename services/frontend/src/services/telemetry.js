@@ -1,45 +1,24 @@
-import { ApplicationInsights } from '@microsoft/applicationinsights-web';
-import { ReactPlugin } from '@microsoft/applicationinsights-react-js';
-import { ClickAnalyticsPlugin } from '@microsoft/applicationinsights-clickanalytics-js';
+// Application Insights disabled - stub implementation
+console.log('Application Insights telemetry disabled');
 
-const reactPlugin = new ReactPlugin();
-const clickAnalyticsPlugin = new ClickAnalyticsPlugin();
+const reactPlugin = { 
+  identifier: 'ReactPlugin',
+  setGlobalContext: () => {}
+};
+const clickAnalyticsPlugin = { identifier: 'ClickAnalyticsPlugin' };
 
-const appInsights = new ApplicationInsights({
-  config: {
-    connectionString: process.env.REACT_APP_APPLICATIONINSIGHTS_CONNECTION_STRING || '',
-    extensions: [reactPlugin, clickAnalyticsPlugin],
-    extensionConfig: {
-      [reactPlugin.identifier]: {
-        history: null // Will be set in App component
-      },
-      [clickAnalyticsPlugin.identifier]: {
-        autoCapture: true,
-        dataTags: {
-          useDefaultContentNameOrId: true
-        }
-      }
-    },
-    enableAutoRouteTracking: true,
-    enableRequestHeaderTracking: true,
-    enableResponseHeaderTracking: true,
-    enableCorsCorrelation: true,
-    enableAjaxPerfTracking: true,
-    enableUnhandledPromiseRejectionTracking: true,
-    disableExceptionTracking: false,
-    disableTelemetry: false,
-    verboseLogging: process.env.NODE_ENV === 'development',
-    enableDebug: process.env.NODE_ENV === 'development',
-    samplingPercentage: 100,
-    maxBatchInterval: 15000,
-    maxBatchSizeInBytes: 64000,
-    namePrefix: 'OTelDemo-',
-    sessionRenewalMs: 30 * 60 * 1000, // 30 minutes
-    sessionExpirationMs: 24 * 60 * 60 * 1000, // 24 hours
-  }
-});
-
-appInsights.loadAppInsights();
+// Stub appInsights object with all required methods
+const appInsights = {
+  loadAppInsights: () => {},
+  trackPageView: () => {},
+  trackEvent: () => {},
+  trackDependency: () => {},
+  trackException: () => {},
+  trackMetric: () => {},
+  trackTrace: () => {},
+  setAuthenticatedUserContext: () => {},
+  addTelemetryInitializer: () => {}
+};
 
 // Custom telemetry helper functions
 export const telemetry = {
