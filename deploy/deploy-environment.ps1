@@ -40,7 +40,7 @@ $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot "..")
 $terraformDir = Join-Path $repoRoot "infrastructure/terraform"
-$frontendSource = Join-Path $repoRoot "services/frontend-simple"
+$frontendSource = Join-Path $repoRoot "services/frontend"
 
 function Write-Step {
     param([string]$Message)
@@ -625,17 +625,36 @@ if (-not $SkipFrontend) {
         if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
 
         try {
-            New-Item -ItemType Directory -Path $stagingDir | Out-Null
-            Copy-Item -Path (Join-Path $frontendSource '*') -Destination $stagingDir -Recurse -Force
+            # Build the React app first
+            Push-Location $frontendSource
+            try {
+                Write-Host "  Installing frontend dependencies and building React app" -ForegroundColor Yellow
+                npm install --no-audit --no-fund
+                Write-Host "  Building React production bundle" -ForegroundColor Yellow
+                npm run build
+            } finally {
+                Pop-Location
+            }
 
+            # Create staging directory and copy build output + server files
+            New-Item -ItemType Directory -Path $stagingDir | Out-Null
+            
+            # Copy the build output
+            $buildDir = Join-Path $frontendSource "build"
+            if (-not (Test-Path $buildDir)) {
+                throw "React build directory not found at $buildDir. Build may have failed."
+            }
+            Copy-Item -Path (Join-Path $buildDir '*') -Destination $stagingDir -Recurse -Force
+            
+            # Copy server files with minimal package.json (only server dependencies)
+            Copy-Item -Path (Join-Path $frontendSource "server.js") -Destination $stagingDir -Force
+            Copy-Item -Path (Join-Path $frontendSource "server-package.json") -Destination (Join-Path $stagingDir "package.json") -Force
+
+            # Install minimal server dependencies
             Push-Location $stagingDir
             try {
-                Write-Host "  Installing frontend dependencies (production only)" -ForegroundColor Yellow
-                if (Test-Path "package-lock.json") {
-                    npm ci --omit=dev --no-audit --no-fund
-                } else {
-                    npm install --production --no-audit --no-fund
-                }
+                Write-Host "  Installing minimal server dependencies" -ForegroundColor Yellow
+                npm install --production --no-audit --no-fund
             } finally {
                 Pop-Location
             }

@@ -45,6 +45,20 @@ app.get('/api/inventory', async (req, res) => {
   }
 });
 
+// Proxy for inventory check
+app.get('/api/inventory/check/:productId', async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { quantity } = req.query;
+    const url = `${INVENTORY_API_BASE}/check/${encodeURIComponent(productId)}${quantity ? `?quantity=${quantity}` : ''}`;
+    const data = await fetchJsonOrThrow(url);
+    res.json(data);
+  } catch (error) {
+    console.error('Inventory check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Proxy for orders service - get customer orders
 app.get('/api/orders/customer/:customerId', async (req, res) => {
   try {
@@ -70,7 +84,37 @@ app.get('/api/orders/customer/:customerId', async (req, res) => {
   }
 });
 
-// Proxy for orders service - create order
+// Proxy for orders service - create order (primary route)
+app.post('/api/orders', async (req, res) => {
+  try {
+    console.log('Creating order:', req.body);
+
+    let targetUrl = '';
+    if (API_GATEWAY_ORDERS_BASE) {
+      targetUrl = API_GATEWAY_ORDERS_BASE;
+    } else if (ORDER_SERVICE_API_BASE) {
+      targetUrl = ORDER_SERVICE_API_BASE;
+    } else {
+      res.status(502).json({ error: 'Order creation endpoint is not configured.' });
+      return;
+    }
+
+    console.log(`Proxying order creation to: ${targetUrl}`);
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Proxy for orders service - process order (legacy route)
 app.post('/api/orders/process', async (req, res) => {
   try {
     console.log('Processing order:', req.body);
