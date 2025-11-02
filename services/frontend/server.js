@@ -59,6 +59,22 @@ app.get('/api/inventory/check/:productId', async (req, res) => {
   }
 });
 
+// Proxy for orders service - get all orders (for UI to filter by customer)
+app.get('/api/orders', async (req, res) => {
+  try {
+    if (!API_GATEWAY_ORDERS_BASE) {
+      res.status(502).json({ error: 'Order service endpoint is not configured.' });
+      return;
+    }
+
+    const data = await fetchJsonOrThrow(API_GATEWAY_ORDERS_BASE);
+    res.json(data);
+  } catch (error) {
+    console.error('Orders service error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Proxy for orders service - get customer orders
 app.get('/api/orders/customer/:customerId', async (req, res) => {
   try {
@@ -106,8 +122,19 @@ app.post('/api/orders', async (req, res) => {
       body: JSON.stringify(req.body)
     });
 
-    const data = await response.json();
-    res.status(response.status).json(data);
+    // Check if response is JSON before parsing
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } else {
+      const text = await response.text();
+      console.error(`Non-JSON response from ${targetUrl}: ${text.substring(0, 200)}`);
+      res.status(response.status).json({ 
+        error: 'Invalid response from order service', 
+        details: text.substring(0, 500)
+      });
+    }
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: error.message });
@@ -139,6 +166,43 @@ app.post('/api/orders/process', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Order creation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Proxy for payments service
+app.post('/api/payments', async (req, res) => {
+  try {
+    console.log('Processing payment:', req.body);
+
+    const API_GATEWAY_PAYMENTS_BASE = SERVICES.apiGateway ? `${trimTrailingSlash(SERVICES.apiGateway)}/api/payments` : '';
+    
+    if (!API_GATEWAY_PAYMENTS_BASE) {
+      res.status(502).json({ error: 'Payment service endpoint is not configured.' });
+      return;
+    }
+
+    console.log(`Proxying payment to: ${API_GATEWAY_PAYMENTS_BASE}`);
+    const response = await fetch(API_GATEWAY_PAYMENTS_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } else {
+      const text = await response.text();
+      console.error(`Non-JSON response from payment service: ${text.substring(0, 200)}`);
+      res.status(response.status).json({ 
+        error: 'Invalid response from payment service', 
+        details: text.substring(0, 500)
+      });
+    }
+  } catch (error) {
+    console.error('Payment processing error:', error);
     res.status(500).json({ error: error.message });
   }
 });
