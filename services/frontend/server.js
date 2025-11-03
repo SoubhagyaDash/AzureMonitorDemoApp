@@ -59,6 +59,21 @@ app.get('/api/inventory/check/:productId', async (req, res) => {
   }
 });
 
+// Proxy for inventory reserve
+app.post('/api/inventory/reserve', async (req, res) => {
+  try {
+    const data = await fetchJsonOrThrow(`${INVENTORY_API_BASE}/reserve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    res.json(data);
+  } catch (error) {
+    console.error('Inventory reserve error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Proxy for orders service - get all orders (for UI to filter by customer)
 app.get('/api/orders', async (req, res) => {
   try {

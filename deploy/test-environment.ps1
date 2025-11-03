@@ -25,11 +25,18 @@ The API Gateway URL. If not provided, will be retrieved from Terraform outputs.
 param(
     [string]$ResourceGroup = "dash-otel-demo2-production",
     [string]$ApiGatewayUrl,
-    [string]$TerraformDir = "..\infrastructure\terraform"
+    [string]$TerraformDir
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Resolve Terraform directory relative to script location if not provided
+if (-not $TerraformDir) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $TerraformDir = Join-Path $scriptDir "..\infrastructure\terraform"
+    $TerraformDir = [System.IO.Path]::GetFullPath($TerraformDir)
+}
 
 $script:FailureCount = 0
 $script:SuccessCount = 0
@@ -107,6 +114,16 @@ if (-not $ApiGatewayUrl) {
     } else {
         Write-Warning "Terraform directory not found. Using default URLs."
         $ApiGatewayUrl = "http://20.114.43.184"
+        # Try to get AKS cluster name from Azure
+        try {
+            $aksClusters = az aks list --resource-group $ResourceGroup --query "[].name" -o tsv 2>$null
+            if ($aksClusters) {
+                $aksClusterName = $aksClusters.Split("`n")[0].Trim()
+                Write-Info "Found AKS Cluster: $aksClusterName"
+            }
+        } catch {
+            Write-Warning "Could not retrieve AKS cluster name from Azure"
+        }
     }
 }
 
@@ -265,7 +282,42 @@ try {
         Write-Warning "Could not verify Inventory Service: $($_.Exception.Message)"
     }
     
-    # Test 8: Verify SQL Database
+    # Test 8: Verify Frontend App Service
+    Write-TestStep "TEST 8: Verify Frontend App Service"
+    
+    try {
+        $frontendUrl = az webapp show `
+            --resource-group $ResourceGroup `
+            --name "app-my-otel-showcase-frontend-production-os1jjc" `
+            --query "defaultHostName" -o tsv 2>$null
+        
+        if ($frontendUrl) {
+            $frontendUrl = "https://$frontendUrl"
+            Write-Info "Frontend URL: $frontendUrl"
+            
+            # Test frontend is responding
+            $response = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+            
+            if ($response.StatusCode -eq 200) {
+                Write-Success "Frontend is accessible"
+                
+                # Test frontend proxy routes
+                $ordersResponse = Invoke-WebRequest -Uri "$frontendUrl/api/orders" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ($ordersResponse.StatusCode -eq 200) {
+                    Write-Success "Frontend /api/orders proxy is working"
+                }
+                
+                $inventoryResponse = Invoke-WebRequest -Uri "$frontendUrl/api/inventory" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ($inventoryResponse.StatusCode -eq 200) {
+                    Write-Success "Frontend /api/inventory proxy is working"
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Could not verify Frontend: $($_.Exception.Message)"
+    }
+    
+    # Test 9: Verify SQL Database
     Write-TestStep "TEST 8: Verify SQL Database Connection"
     
     try {
@@ -283,10 +335,10 @@ try {
                 --server $sqlServer `
                 --query "[].name" -o tsv 2>&1
             
-            if ($databases -match "OrderDb") {
-                Write-Success "OrderDb database found"
+            if ($databases -match "OrdersDb") {
+                Write-Success "OrdersDb database found"
             } else {
-                Write-Warning "OrderDb database not found in server"
+                Write-Warning "OrdersDb database not found in server"
             }
         }
     } catch {
