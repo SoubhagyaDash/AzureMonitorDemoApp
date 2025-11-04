@@ -237,3 +237,16 @@ output "application_access_guide" {
     monitoring_dashboard   = "https://portal.azure.com/#@/resource${azurerm_application_insights.main.id}/overview"
   }
 }
+
+# VM Initialization Status Commands
+output "vm_health_check_commands" {
+  description = "Commands to check VM initialization status"
+  value = {
+    check_extension_status_vm1 = "az vm extension show --resource-group ${azurerm_resource_group.main.name} --vm-name ${azurerm_linux_virtual_machine.vm[0].name} --name vm-init-script --query 'provisioningState'"
+    check_extension_status_vm2 = length(azurerm_linux_virtual_machine.vm) > 1 ? "az vm extension show --resource-group ${azurerm_resource_group.main.name} --vm-name ${azurerm_linux_virtual_machine.vm[1].name} --name vm-init-script --query 'provisioningState'" : null
+    view_init_log_vm1          = "ssh ${var.admin_username}@${azurerm_public_ip.vm_public_ip[0].ip_address} 'sudo tail -100 /var/log/vm-init-custom.log'"
+    view_init_log_vm2          = length(azurerm_public_ip.vm_public_ip) > 1 ? "ssh ${var.admin_username}@${azurerm_public_ip.vm_public_ip[1].ip_address} 'sudo tail -100 /var/log/vm-init-custom.log'" : null
+    run_health_check_vm1       = "ssh ${var.admin_username}@${azurerm_public_ip.vm_public_ip[0].ip_address} 'bash -s' < infrastructure/terraform/scripts/vm-health-check.sh"
+    run_health_check_vm2       = length(azurerm_public_ip.vm_public_ip) > 1 ? "ssh ${var.admin_username}@${azurerm_public_ip.vm_public_ip[1].ip_address} 'bash -s' < infrastructure/terraform/scripts/vm-health-check.sh" : null
+  }
+}

@@ -55,16 +55,30 @@ resource "azurerm_linux_virtual_machine" "vm" {
     version   = "latest"
   }
 
-  # Install Docker and Azure Monitor Agent
-  custom_data = base64encode(templatefile("${path.module}/scripts/vm-init.sh", {
-    application_insights_connection_string = azurerm_application_insights.main.connection_string
-    vm_index                              = count.index + 1
-    admin_username                        = var.admin_username
-  }))
-
   tags = merge(var.tags, {
     Role = count.index == 0 ? "api-gateway" : "services"
   })
+}
+
+# Custom Script Extension for VM initialization
+resource "azurerm_virtual_machine_extension" "vm_init" {
+  count                      = var.vm_count
+  name                       = "vm-init-script"
+  virtual_machine_id         = azurerm_linux_virtual_machine.vm[count.index].id
+  publisher                  = "Microsoft.Azure.Extensions"
+  type                       = "CustomScript"
+  type_handler_version       = "2.1"
+  auto_upgrade_minor_version = true
+
+  protected_settings = jsonencode({
+    script = base64encode(templatefile("${path.module}/scripts/vm-init.sh", {
+      application_insights_connection_string = azurerm_application_insights.main.connection_string
+      vm_index                              = count.index + 1
+      admin_username                        = var.admin_username
+    }))
+  })
+
+  tags = var.tags
 }
 
 # Load Balancer for VMs
