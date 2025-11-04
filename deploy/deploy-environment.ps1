@@ -486,78 +486,114 @@ if (-not $SkipVmDeployment) {
         "FailureInjection__Enabled" = "false"
     }))
 
+    # SSH key path for passwordless authentication
+    $sshKeyPath = Join-Path $env:USERPROFILE ".ssh\azure_vm_key"
+    $sshOptions = @("-o", "StrictHostKeyChecking=no")
+    if (Test-Path $sshKeyPath) {
+        $sshOptions += @("-i", $sshKeyPath)
+        Write-Host "  Using SSH key: $sshKeyPath" -ForegroundColor Gray
+    } else {
+        Write-Host "  ⚠ SSH key not found at $sshKeyPath, will use password authentication" -ForegroundColor Yellow
+    }
+
     foreach ($vmIndex in $vmServiceMap.Keys) {
         $vmName = $vmNames[$vmIndex]
         $vmIp = if ($vmPublicIps.Count -gt $vmIndex) { $vmPublicIps[$vmIndex] } else { "(private)" }
         Write-Host "  → Deploying services to $vmName ($vmIp)" -ForegroundColor Yellow
 
-        $scriptLines = New-Object System.Collections.Generic.List[string]
-        $scriptLines.Add("#!/bin/bash")
-        $scriptLines.Add("set -euo pipefail")
-        $scriptLines.Add("echo 'Starting container rollout on $vmName'")
-        $scriptLines.Add("if ! command -v docker >/dev/null 2>&1; then")
-        $scriptLines.Add("  apt-get update -y")
-        $scriptLines.Add("  apt-get install -y docker.io")
-        $scriptLines.Add("  systemctl enable docker >/dev/null 2>&1 || true")
-        $scriptLines.Add("  systemctl start docker >/dev/null 2>&1 || true")
-        $scriptLines.Add("fi")
-        $scriptLines.Add(': "${acrPasswordBase64:?ACR registry password was not supplied}"')
-        $scriptLines.Add('acrPassword=$(printf "%s" "$acrPasswordBase64" | base64 --decode)')
-        $scriptLines.Add("unset acrPasswordBase64")
-        $scriptLines.Add("printf '%s' `"`$acrPassword`" | docker login $acrLoginServer --username $acrAdminUsername --password-stdin >/dev/null")
-        $scriptLines.Add("unset acrPassword")
+        try {
+            # Step 1: Verify Docker is installed and running
+            Write-Host "    → Checking Docker status..." -ForegroundColor Cyan
+            $dockerCheck = ssh @sshOptions azureuser@$vmIp "docker --version && systemctl is-active docker" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "    ✗ Docker not ready on $vmName" -ForegroundColor Red
+                throw "Docker is not running on $vmName. Please ensure VM initialization completed successfully."
+            }
+            Write-Host "    ✓ Docker is running" -ForegroundColor Green
 
-        foreach ($service in $vmServiceMap[$vmIndex]) {
-            $scriptLines.Add("echo 'Deploying $($service.Name)'")
-            $scriptLines.Add("docker pull $($service.Image)")
-            $scriptLines.Add("if docker ps -a --format '{{.Names}}' | grep -Eq '^$($service.Name)$'; then")
-            $scriptLines.Add("  docker stop $($service.Name) >/dev/null 2>&1 || true")
-            $scriptLines.Add("  docker rm $($service.Name) >/dev/null 2>&1 || true")
-            $scriptLines.Add("fi")
+            # Step 2: Login to ACR
+            Write-Host "    → Logging into ACR..." -ForegroundColor Cyan
+            $loginCmd = "echo '$acrPasswordBase64' | base64 -d | docker login $acrLoginServer --username $acrAdminUsername --password-stdin 2>&1"
+            $loginResult = ssh @sshOptions azureuser@$vmIp $loginCmd
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "    ✗ ACR login failed:" -ForegroundColor Red
+                Write-Host "      $loginResult" -ForegroundColor Red
+                throw "Failed to login to ACR from $vmName"
+            }
+            Write-Host "    ✓ ACR login successful" -ForegroundColor Green
 
-            $runParts = New-Object System.Collections.Generic.List[string]
-            $runParts.Add("docker run -d")
-            $runParts.Add("--name $($service.Name)")
-            $runParts.Add("--restart unless-stopped")
+            # Step 3: Deploy each service
+            foreach ($service in $vmServiceMap[$vmIndex]) {
+                Write-Host "    → Deploying $($service.Name)..." -ForegroundColor Cyan
+                
+                # Pull image
+                Write-Host "      Pulling image..." -ForegroundColor Gray
+                $pullResult = ssh @sshOptions azureuser@$vmIp "docker pull $($service.Image) 2>&1"
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "    ✗ Failed to pull image:" -ForegroundColor Red
+                    Write-Host "      $pullResult" -ForegroundColor Red
+                    throw "Failed to pull $($service.Image) on $vmName"
+                }
+                Write-Host "      ✓ Image pulled" -ForegroundColor Green
 
-            if ($service.UseHostNetwork) {
-                $runParts.Add("--network host")
+                # Stop and remove existing container if it exists
+                Write-Host "      Stopping existing container..." -ForegroundColor Gray
+                ssh @sshOptions azureuser@$vmIp "docker stop $($service.Name) 2>/dev/null || true; docker rm $($service.Name) 2>/dev/null || true" | Out-Null
+
+                # Build docker run command
+                $runParts = @("docker run -d")
+                $runParts += "--name $($service.Name)"
+                $runParts += "--restart unless-stopped"
+
+                if ($service.UseHostNetwork) {
+                    $runParts += "--network host"
+                }
+
+                foreach ($port in $service.Ports) {
+                    $runParts += "-p $port"
+                }
+
+                foreach ($entry in $service.Environment.GetEnumerator()) {
+                    $envValue = $entry.Value -replace "'", "'\''"  # Escape single quotes
+                    $runParts += "-e '$($entry.Key)=$envValue'"
+                }
+
+                $runParts += $($service.Image)
+                $dockerRunCmd = $runParts -join ' '
+
+                # Start container
+                Write-Host "      Starting container..." -ForegroundColor Gray
+                $runResult = ssh @sshOptions azureuser@$vmIp $dockerRunCmd 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "    ✗ Failed to start container:" -ForegroundColor Red
+                    Write-Host "      $runResult" -ForegroundColor Red
+                    throw "Failed to start $($service.Name) on $vmName"
+                }
+                
+                # Verify container is running
+                Start-Sleep -Seconds 2
+                $containerStatus = ssh @sshOptions azureuser@$vmIp "docker ps --filter name=$($service.Name) --format '{{.Status}}'" 2>&1
+                if ($containerStatus -match "Up") {
+                    Write-Host "    ✓ $($service.Name) is running" -ForegroundColor Green
+                } else {
+                    Write-Host "    ⚠ $($service.Name) may not be healthy. Status: $containerStatus" -ForegroundColor Yellow
+                    # Get logs for debugging
+                    $logs = ssh @sshOptions azureuser@$vmIp "docker logs $($service.Name) --tail 20 2>&1"
+                    Write-Host "      Recent logs:" -ForegroundColor Gray
+                    $logs | ForEach-Object { Write-Host "        $_" -ForegroundColor Gray }
+                }
             }
 
-            foreach ($port in $service.Ports) {
-                $runParts.Add("-p $port")
-            }
+            # Step 4: Show final container status
+            Write-Host "    → Final container status:" -ForegroundColor Cyan
+            $finalStatus = ssh @sshOptions azureuser@$vmIp "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'" 2>&1
+            $finalStatus | ForEach-Object { Write-Host "      $_" -ForegroundColor White }
 
-            foreach ($entry in $service.Environment.GetEnumerator()) {
-                $runParts.Add("-e $($entry.Key)=$(ConvertTo-ShellLiteral $entry.Value)")
-            }
-
-            $runParts.Add($service.Image)
-            $scriptLines.Add(($runParts -join ' '))
         }
-
-        $scriptLines.Add("docker ps --format '{{.Names}} {{.Status}} {{.Ports}}'")
-
-        $azArgs = @(
-            "vm", "run-command", "invoke",
-            "--resource-group", $resourceGroup,
-            "--name", $vmName,
-            "--command-id", "RunShellScript",
-            "--scripts"
-        )
-        $azArgs += $scriptLines
-
-        $runCommandParameters = @()
-        if (-not [string]::IsNullOrEmpty($acrPasswordBase64)) {
-            $runCommandParameters += "acrPasswordBase64=$acrPasswordBase64"
+        catch {
+            Write-Host "    ✗ Error deploying to $vmName`: $_" -ForegroundColor Red
+            throw
         }
-
-        if ($runCommandParameters.Count -gt 0) {
-            $azArgs += "--parameters"
-            $azArgs += $runCommandParameters
-        }
-
-        az @azArgs | Out-Null
     }
 } else {
     Write-Step "Skipping VM container deployment"

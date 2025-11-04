@@ -35,9 +35,20 @@ resource "azurerm_linux_virtual_machine" "vm" {
   size                = var.vm_size
   admin_username      = var.admin_username
 
-  # Disable password authentication and use SSH keys
+  # Support both password and SSH key authentication
+  # Password is kept for emergency access, but SSH key is preferred
   disable_password_authentication = false
   admin_password                  = random_password.vm_admin_password.result
+
+  # SSH public key for passwordless authentication
+  # Will use the key if it exists, otherwise password-only
+  dynamic "admin_ssh_key" {
+    for_each = fileexists("${pathexpand("~")}/.ssh/azure_vm_key.pub") ? [1] : []
+    content {
+      username   = var.admin_username
+      public_key = file("${pathexpand("~")}/.ssh/azure_vm_key.pub")
+    }
+  }
 
   network_interface_ids = [
     azurerm_network_interface.vm_nic[count.index].id,
