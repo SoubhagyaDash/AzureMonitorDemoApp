@@ -57,38 +57,61 @@ wait_for_apt
 retry_command apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
 
-# Install Docker with retries
+# Install Docker using official repository
 echo "=== Installing Docker ==="
-retry_command curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-bash /tmp/get-docker.sh
+# Install prerequisites
+retry_command apt-get install -y ca-certificates curl gnupg lsb-release
+
+# Add Docker's official GPG key
+mkdir -p /etc/apt/keyrings
+retry_command curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+# Set up Docker repository
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine
+wait_for_apt
+retry_command apt-get update
+retry_command apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Add user to docker group
 usermod -aG docker ${admin_username}
 
-# Start and enable Docker
-systemctl start docker
+# Ensure Docker is enabled and started
 systemctl enable docker
+systemctl start docker
+
+# Wait a moment for Docker to fully initialize
+sleep 5
 
 # Verify Docker is running
 echo "=== Verifying Docker installation ==="
+systemctl status docker --no-pager || true
+
 for i in {1..30}; do
-    if docker info >/dev/null 2>&1; then
+    if systemctl is-active --quiet docker && docker info >/dev/null 2>&1; then
         echo "Docker is running successfully"
+        docker --version
         break
     fi
     if [ $i -eq 30 ]; then
         echo "ERROR: Docker failed to start after 30 attempts"
+        echo "Docker service status:"
+        systemctl status docker --no-pager || true
+        echo "Docker daemon logs:"
+        journalctl -u docker -n 50 --no-pager || true
         exit 1
     fi
     echo "Waiting for Docker to start... (attempt $i/30)"
     sleep 2
 done
 
-# Install Docker Compose
-echo "=== Installing Docker Compose ==="
-retry_command curl -L "https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
-
-# Verify Docker Compose
-docker-compose --version || docker compose version
+# Verify Docker Compose plugin
+echo "=== Verifying Docker Compose ==="
+docker compose version
 
 # Install .NET 8.0 Runtime
 echo "=== Installing .NET 8.0 Runtime ==="
