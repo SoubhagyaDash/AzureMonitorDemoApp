@@ -9,21 +9,27 @@ all components: API Gateway, Order Service, Payment Service, Event Hub,
 Event Processor, Cosmos DB, and Inventory Service.
 
 .PARAMETER ResourceGroup
-The Azure resource group name. Defaults to dash-otel-demo2-production.
+The Azure resource group name. If not provided, will be retrieved from Terraform outputs.
 
 .PARAMETER ApiGatewayUrl
 The API Gateway URL. If not provided, will be retrieved from Terraform outputs.
+
+.PARAMETER TerraformDir
+Path to the Terraform directory. Defaults to ../infrastructure/terraform relative to this script.
 
 .EXAMPLE
 .\test-environment.ps1
 
 .EXAMPLE
-.\test-environment.ps1 -ResourceGroup "my-rg" -ApiGatewayUrl "http://20.114.43.184"
+.\test-environment.ps1 -ResourceGroup "my-rg"
+
+.EXAMPLE
+.\test-environment.ps1 -ApiGatewayUrl "http://20.114.43.184"
 #>
 
 [CmdletBinding()]
 param(
-    [string]$ResourceGroup = "dash-otel-demo2-production",
+    [string]$ResourceGroup,
     [string]$ApiGatewayUrl,
     [string]$TerraformDir
 )
@@ -91,40 +97,55 @@ function Test-ServiceHealth {
     }
 }
 
-# Get Terraform outputs if not provided
-if (-not $ApiGatewayUrl) {
-    Write-TestStep "Retrieving Terraform outputs"
-    
-    if (Test-Path $TerraformDir) {
-        Push-Location $TerraformDir
-        try {
-            $terraformOutput = terraform output -json | ConvertFrom-Json
+# Get Terraform outputs
+Write-TestStep "Retrieving Configuration from Terraform"
+
+if (Test-Path $TerraformDir) {
+    Push-Location $TerraformDir
+    try {
+        $terraformOutput = terraform output -json | ConvertFrom-Json
+        
+        # Get resource group name
+        if (-not $ResourceGroup) {
+            $ResourceGroup = $terraformOutput.resource_group_name.value
+        }
+        
+        # Get API Gateway URL
+        if (-not $ApiGatewayUrl) {
             $ApiGatewayUrl = $terraformOutput.service_endpoints.value.api_gateway_public_url
-            $orderServiceUrl = $terraformOutput.service_endpoints.value.order_service_private_url
-            $paymentServiceUrl = $terraformOutput.service_endpoints.value.payment_service_private_url
-            $inventoryServiceUrl = $terraformOutput.service_endpoints.value.inventory_service_private_url
-            $eventProcessorUrl = $terraformOutput.service_endpoints.value.event_processor_private_url
-            $aksClusterName = $terraformOutput.aks_cluster_name.value
-            
-            Write-Info "API Gateway: $ApiGatewayUrl"
-            Write-Info "AKS Cluster: $aksClusterName"
-        } finally {
-            Pop-Location
         }
-    } else {
-        Write-Warning "Terraform directory not found. Using default URLs."
-        $ApiGatewayUrl = "http://20.114.43.184"
-        # Try to get AKS cluster name from Azure
-        try {
-            $aksClusters = az aks list --resource-group $ResourceGroup --query "[].name" -o tsv 2>$null
-            if ($aksClusters) {
-                $aksClusterName = $aksClusters.Split("`n")[0].Trim()
-                Write-Info "Found AKS Cluster: $aksClusterName"
-            }
-        } catch {
-            Write-Warning "Could not retrieve AKS cluster name from Azure"
-        }
+        
+        # Get other service URLs
+        $orderServiceUrl = $terraformOutput.service_endpoints.value.order_service_private_url
+        $paymentServiceUrl = $terraformOutput.service_endpoints.value.payment_service_private_url
+        $inventoryServiceUrl = $terraformOutput.service_endpoints.value.inventory_service_private_url
+        $eventProcessorUrl = $terraformOutput.service_endpoints.value.event_processor_private_url
+        
+        # Get resource names
+        $aksClusterName = $terraformOutput.aks_cluster_name.value
+        $sqlServerName = $terraformOutput.sql_server_name.value
+        $cosmosAccountName = $terraformOutput.cosmos_endpoint.value -replace 'https://|\.documents\.azure\.com.*'
+        $frontendWebAppName = $terraformOutput.frontend_web_app_name.value
+        $vm1Name = $terraformOutput.vm_names.value[0]
+        $vm2Name = if ($terraformOutput.vm_names.value.Count -gt 1) { $terraformOutput.vm_names.value[1] } else { $null }
+        
+        Write-Info "Resource Group: $ResourceGroup"
+        Write-Info "API Gateway: $ApiGatewayUrl"
+        Write-Info "AKS Cluster: $aksClusterName"
+        Write-Info "SQL Server: $sqlServerName"
+        Write-Info "Frontend App: $frontendWebAppName"
+        
+    } catch {
+        Write-Error "Failed to read Terraform outputs: $($_.Exception.Message)"
+        Write-Error "Please run 'terraform apply' first to create the infrastructure."
+        exit 1
+    } finally {
+        Pop-Location
     }
+} else {
+    Write-Error "Terraform directory not found at: $TerraformDir"
+    Write-Error "Please specify the correct path with -TerraformDir parameter."
+    exit 1
 }
 
 Write-TestHeader "OPENTELEMETRY DEMO - END-TO-END TEST"
@@ -261,8 +282,8 @@ try {
     Write-TestStep "TEST 7: Verify Inventory Service"
     
     try {
-        # Try via public IP
-        $vmPublicIp = az vm show --resource-group $ResourceGroup --name "vm-my-otel-showcase-1-production" --show-details --query "publicIps" -o tsv 2>&1
+        # Try via VM public IP from Terraform
+        $vmPublicIp = az vm show --resource-group $ResourceGroup --name $vm1Name --show-details --query "publicIps" -o tsv 2>&1
         
         if ($vmPublicIp) {
             $inventoryUrl = "http://${vmPublicIp}:3001/api/inventory"
@@ -288,7 +309,7 @@ try {
     try {
         $frontendUrl = az webapp show `
             --resource-group $ResourceGroup `
-            --name "app-my-otel-showcase-frontend-production-os1jjc" `
+            --name $frontendWebAppName `
             --query "defaultHostName" -o tsv 2>$null
         
         if ($frontendUrl) {
@@ -318,21 +339,21 @@ try {
     }
     
     # Test 9: Verify SQL Database
-    Write-TestStep "TEST 8: Verify SQL Database Connection"
+    Write-TestStep "TEST 9: Verify SQL Database Connection"
     
     try {
-        $sqlServer = az sql server show `
+        $serverCheck = az sql server show `
             --resource-group $ResourceGroup `
-            --name "sql-my-otel-showcase-production-os1jjc" `
+            --name $sqlServerName `
             --query "name" -o tsv 2>&1
         
-        if ($sqlServer) {
+        if ($serverCheck) {
             Write-Success "SQL Database server exists"
-            Write-Info "Server: $sqlServer"
+            Write-Info "Server: $sqlServerName"
             
             $databases = az sql db list `
                 --resource-group $ResourceGroup `
-                --server $sqlServer `
+                --server $sqlServerName `
                 --query "[].name" -o tsv 2>&1
             
             if ($databases -match "OrdersDb") {
