@@ -77,70 +77,61 @@ function generateProductId() {
 
 // API methods
 const api = {
-  // Health checks
+  // Health checks - Use API Gateway's health endpoint for all services
   async getServiceStatus() {
     try {
-      const services = [
-        { name: 'API Gateway', client: apiGatewayClient, endpoint: '/health' }
-      ];
-
-      if (orderServiceClient) {
-        services.push({ name: 'Order Service', client: orderServiceClient, endpoint: '/api/orders/health' });
-      }
-
-      if (inventoryServiceClient) {
-        services.push({ name: 'Inventory Service', client: inventoryServiceClient, endpoint: '/health' });
-      }
-
-      if (eventProcessorClient) {
-        services.push({ name: 'Event Processor', client: eventProcessorClient, endpoint: '/health' });
-      }
-
-      if (notificationServiceClient) {
-        services.push({ name: 'Notification Service', client: notificationServiceClient, endpoint: '/health' });
-      }
-
-      const results = await Promise.allSettled(
-        services.map(async (service) => {
-          try {
-            const response = await service.client.get(service.endpoint);
-            return {
-              name: service.name,
-              status: 'healthy',
-              responseTime: response.headers['x-response-time'] || 'N/A',
-              data: response.data
-            };
-          } catch (error) {
-            return {
-              name: service.name,
-              status: 'unhealthy',
-              error: error.message,
-              responseTime: 'N/A'
-            };
+      // Call API Gateway's centralized health check endpoint
+      const response = await apiGatewayClient.get('/api/health/all');
+      
+      if (response.data && response.data.Services) {
+        // Transform the response to match the expected format
+        return response.data.Services.map(service => ({
+          name: service.Name,
+          status: service.IsHealthy ? 'healthy' : 'unhealthy',
+          responseTime: `${service.ResponseTimeMs}ms`,
+          data: {
+            status: service.Status,
+            lastChecked: service.LastChecked,
+            error: service.Error
           }
-        })
-      );
-
-      return results.map((result, index) => {
-        const service = services[index];
-
-        if (result.status === 'fulfilled') {
-          return {
-            ...service,
-            ...result.value
-          };
-        }
-
-        return {
-          ...service,
-          status: 'unhealthy',
-          error: result.reason?.message || 'Service check failed',
-          responseTime: 'N/A'
-        };
-      });
-    } catch (error) {
-      console.error('Error checking service status:', error);
+        }));
+      }
+      
+      // Fallback if response structure is unexpected
       return [];
+    } catch (error) {
+      console.error('Failed to fetch service status:', error);
+      
+      // Return error status for all services if the health check fails
+      return [
+        { name: 'API Gateway', status: 'unhealthy', error: error.message, responseTime: 'N/A' },
+        { name: 'Order Service', status: 'unknown', error: 'Health check unavailable', responseTime: 'N/A' },
+        { name: 'Payment Service', status: 'unknown', error: 'Health check unavailable', responseTime: 'N/A' },
+        { name: 'Inventory Service', status: 'unknown', error: 'Health check unavailable', responseTime: 'N/A' },
+        { name: 'Event Processor', status: 'unknown', error: 'Health check unavailable', responseTime: 'N/A' },
+        { name: 'Notification Service', status: 'unknown', error: 'Health check unavailable', responseTime: 'N/A' }
+      ];
+    }
+  },
+
+  // Individual service health check (optional, for detailed checks)
+  async getIndividualServiceHealth(serviceName) {
+    try {
+      const response = await apiGatewayClient.get(`/api/health/${serviceName}`);
+      return {
+        name: response.data.Name,
+        status: response.data.IsHealthy ? 'healthy' : 'unhealthy',
+        responseTime: `${response.data.ResponseTimeMs}ms`,
+        data: response.data
+      };
+    } catch (error) {
+      console.error(`Failed to fetch health for ${serviceName}:`, error);
+      return {
+        name: serviceName,
+        status: 'unhealthy',
+        error: error.message,
+        responseTime: 'N/A'
+      };
     }
   },
 

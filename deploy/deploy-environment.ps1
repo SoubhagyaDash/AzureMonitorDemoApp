@@ -25,7 +25,7 @@ param(
     [switch]$SkipVmDeployment,
     [switch]$SkipFrontend,
     [switch]$SkipFunctionApp,
-    [switch]$IncludeNotificationService,
+    [switch]$SkipNotificationService,
     [ValidateRange(60, 3600)]
     [int]$FrontendDeployTimeoutSeconds = 600,
     [ValidateRange(30, 900)]
@@ -273,7 +273,8 @@ $servicesToBuild = @(
     @{ Name = "inventory-service"; Path = "services/inventory-service" }
 )
 
-if ($IncludeNotificationService) {
+# Include notification service by default (unless explicitly skipped)
+if (-not $SkipNotificationService) {
     $servicesToBuild += @{ Name = "notification-service"; Path = "services/notification-service" }
 }
 
@@ -360,7 +361,9 @@ if (-not $SkipAKS) {
     
     try {
         $servicesToDeploy = @("order-service", "payment-service", "event-processor")
-        if ($IncludeNotificationService) {
+        
+        # Include notification service by default (unless explicitly skipped)
+        if (-not $SkipNotificationService) {
             $servicesToDeploy += "notification-service"
         }
         
@@ -389,7 +392,12 @@ if (-not $SkipAKS) {
         Write-Host "  → Waiting for deployments to roll out..." -ForegroundColor Yellow
         
         # Wait for rollouts to complete
-        foreach ($serviceName in @("order-service", "payment-service", "event-processor")) {
+        $servicesToWait = @("order-service", "payment-service", "event-processor")
+        if (-not $SkipNotificationService) {
+            $servicesToWait += "notification-service"
+        }
+        
+        foreach ($serviceName in $servicesToWait) {
             Write-Host "    Waiting for $serviceName..." -ForegroundColor Gray
             kubectl rollout status deployment/$serviceName -n otel-demo --timeout=5m 2>$null
         }
@@ -407,14 +415,21 @@ if (-not $SkipAKS) {
             $orderServicePort = kubectl get service order-service -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
             $paymentServicePort = kubectl get service payment-service -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
             $eventProcessorPort = kubectl get service event-processor -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null
+            $notificationServicePort = if (-not $SkipNotificationService) { 
+                kubectl get service notification-service -n otel-demo -o jsonpath='{.spec.ports[0].nodePort}' 2>$null 
+            } else { $null }
             
             $orderServiceUrl = "http://${aksNodeIp}:${orderServicePort}"
             $paymentServiceUrl = "http://${aksNodeIp}:${paymentServicePort}"
             $eventProcessorUrl = "http://${aksNodeIp}:${eventProcessorPort}"
+            $notificationServiceUrl = if ($notificationServicePort) { "http://${aksNodeIp}:${notificationServicePort}" } else { $null }
             
             Write-Host "    Order Service: $orderServiceUrl" -ForegroundColor Green
             Write-Host "    Payment Service: $paymentServiceUrl" -ForegroundColor Green
             Write-Host "    Event Processor: $eventProcessorUrl" -ForegroundColor Green
+            if ($notificationServiceUrl) {
+                Write-Host "    Notification Service: $notificationServiceUrl" -ForegroundColor Green
+            }
         } else {
             Write-Warning "Could not retrieve AKS node IP. API Gateway will use placeholder URLs."
         }
@@ -468,12 +483,14 @@ if (-not $SkipVmDeployment) {
     # Use actual NodePort URLs from AKS deployment above, fallback to Kubernetes DNS if not available
     $aksOrderServiceUrl = if ($orderServiceUrl) { $orderServiceUrl } else { "http://order-service.otel-demo.svc.cluster.local:8080" }
     $aksPaymentServiceUrl = if ($paymentServiceUrl) { $paymentServiceUrl } else { "http://payment-service.otel-demo.svc.cluster.local:3000" }
+    $aksEventProcessorUrl = if ($eventProcessorUrl) { $eventProcessorUrl } else { "http://event-processor.otel-demo.svc.cluster.local:8000" }
+    $aksNotificationServiceUrl = if ($notificationServiceUrl) { $notificationServiceUrl } else { "http://notification-service.otel-demo.svc.cluster.local:8080" }
     # Use inventory service URL from service discovery, fallback to VM1 private IP
     $inventoryBaseUrl = if ($inventoryServiceUrl) { $inventoryServiceUrl } else { "http://${inventoryVmPrivateIp}:3001" }
 
     # API Gateway Configuration - Acts as orchestrator calling downstream services
     # NO direct database access - calls Order Service for order operations
-    $vmServiceMap[$apiGatewayVmIndex].Add((New-ServiceConfig -Name "api-gateway" -Image "$containerImagePrefix/api-gateway:$DockerTag" -UseHostNetwork $true -Environment @{
+    $apiGatewayEnv = @{
         "ASPNETCORE_ENVIRONMENT" = "Production"
         "ASPNETCORE_URLS" = "http://+:5000"
         "ApplicationInsights__ConnectionString" = $appInsightsConnectionString
@@ -483,8 +500,16 @@ if (-not $SkipVmDeployment) {
         "Services__OrderService__BaseUrl" = $aksOrderServiceUrl
         "Services__InventoryService__BaseUrl" = $inventoryBaseUrl
         "Services__PaymentService__BaseUrl" = $aksPaymentServiceUrl
+        "Services__EventProcessor__BaseUrl" = $aksEventProcessorUrl
         "FailureInjection__Enabled" = "false"
-    }))
+    }
+    
+    # Add notification service URL if enabled
+    if (-not $SkipNotificationService) {
+        $apiGatewayEnv["Services__NotificationService__BaseUrl"] = $aksNotificationServiceUrl
+    }
+    
+    $vmServiceMap[$apiGatewayVmIndex].Add((New-ServiceConfig -Name "api-gateway" -Image "$containerImagePrefix/api-gateway:$DockerTag" -UseHostNetwork $true -Environment $apiGatewayEnv))
 
     # SSH key path for passwordless authentication
     $sshKeyPath = Join-Path $env:USERPROFILE ".ssh\azure_vm_key"

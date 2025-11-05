@@ -39,6 +39,23 @@ builder.Services.AddHttpClient("PaymentService", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
+builder.Services.AddHttpClient("EventProcessor", client =>
+{
+    var baseUrl = builder.Configuration["Services:EventProcessor:BaseUrl"] ?? "http://localhost:8000";
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+builder.Services.AddHttpClient("NotificationService", client =>
+{
+    var baseUrl = builder.Configuration["Services:NotificationService:BaseUrl"];
+    if (!string.IsNullOrEmpty(baseUrl))
+    {
+        client.BaseAddress = new Uri(baseUrl);
+    }
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
 // Configure Azure Monitor OpenTelemetry
 builder.Services.AddOpenTelemetry().UseAzureMonitor(options =>
 {
