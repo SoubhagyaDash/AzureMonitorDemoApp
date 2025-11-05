@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"notification-service/internal/models"
 	"notification-service/internal/services"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -117,7 +120,80 @@ func (h *NotificationHandler) HandleWebSocket(c *gin.Context) {
 }
 
 func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
-	// Process messages from Event Hub
+	// Parse the order event
+	event, err := services.ParseOrderEvent(message)
+	if err != nil {
+		log.Printf("Failed to parse event: %v", err)
+		return err
+	}
+
+	log.Printf("Processing %s event for Order ID: %s, Customer ID: %s", 
+		event.EventType, event.OrderID, event.CustomerID)
+
+	// Create notification based on event type
+	notification := models.WebSocketMessage{
+		Type:      "notification",
+		Timestamp: time.Now(),
+	}
+
+	switch event.EventType {
+	case "OrderCreated":
+		notification.Data = map[string]interface{}{
+			"type":        "order_created",
+			"orderId":     event.OrderID,
+			"customerId":  event.CustomerID,
+			"subject":     "Order Confirmed",
+			"message":     fmt.Sprintf("Your order #%s has been confirmed! Total: $%.2f", event.OrderID, event.TotalAmount),
+			"totalAmount": event.TotalAmount,
+			"productId":   event.ProductID,
+			"quantity":    event.Quantity,
+			"timestamp":   event.Timestamp,
+		}
+
+	case "OrderStatusUpdated":
+		notification.Data = map[string]interface{}{
+			"type":       "order_status_updated",
+			"orderId":    event.OrderID,
+			"customerId": event.CustomerID,
+			"subject":    "Order Status Update",
+			"message":    fmt.Sprintf("Order #%s status: %s", event.OrderID, event.Status),
+			"status":     event.Status,
+			"timestamp":  event.Timestamp,
+		}
+
+	case "PaymentProcessed":
+		notification.Data = map[string]interface{}{
+			"type":        "payment_processed",
+			"orderId":     event.OrderID,
+			"customerId":  event.CustomerID,
+			"subject":     "Payment Processed",
+			"message":     fmt.Sprintf("Payment of $%.2f processed for order #%s", event.TotalAmount, event.OrderID),
+			"totalAmount": event.TotalAmount,
+			"timestamp":   event.Timestamp,
+		}
+
+	default:
+		log.Printf("Unknown event type: %s", event.EventType)
+		notification.Data = map[string]interface{}{
+			"type":       "order_event",
+			"orderId":    event.OrderID,
+			"customerId": event.CustomerID,
+			"subject":    "Order Update",
+			"message":    fmt.Sprintf("Update for order #%s", event.OrderID),
+			"eventType":  event.EventType,
+			"timestamp":  event.Timestamp,
+		}
+	}
+
+	// Send notification via WebSocket
+	if err := h.wsHub.SendToCustomer(event.CustomerID, notification); err != nil {
+		log.Printf("Failed to send WebSocket notification: %v", err)
+		// Don't return error - WebSocket failure shouldn't fail event processing
+	} else {
+		log.Printf("Sent %s notification to customer %s via WebSocket", 
+			event.EventType, event.CustomerID)
+	}
+
 	return nil
 }
 

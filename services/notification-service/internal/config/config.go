@@ -56,7 +56,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		// Server
-		Port:        getEnv("PORT", "9000"),
+		Port:        getEnv("PORT", "8080"),
 		Environment: getEnv("ENVIRONMENT", "development"),
 
 		// OpenTelemetry
