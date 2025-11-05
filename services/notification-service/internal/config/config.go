@@ -60,7 +60,7 @@ func Load() *Config {
 		Environment: getEnv("ENVIRONMENT", "development"),
 
 		// OpenTelemetry
-		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
+		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		ServiceName:  getEnv("OTEL_SERVICE_NAME", "notification-service"),
 
 		// Redis

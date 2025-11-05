@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"notification-service/internal/config"
@@ -35,6 +36,13 @@ var (
 
 // InitTelemetry initializes OpenTelemetry with OTLP exporters
 func InitTelemetry(cfg *config.Config) (func(context.Context) error, error) {
+	// If no OTLP endpoint is configured, skip telemetry initialization
+	// Application Insights will be used directly via connection string
+	if cfg.OTLPEndpoint == "" {
+		log.Println("No OTLP endpoint configured, skipping OpenTelemetry initialization")
+		return func(ctx context.Context) error { return nil }, nil
+	}
+
 	// Create resource
 	res := resource.NewWithAttributes(
 		semconv.SchemaURL,

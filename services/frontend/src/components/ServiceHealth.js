@@ -17,91 +17,68 @@ import {
   Info as InfoIcon,
   Refresh as RefreshIcon
 } from '@mui/icons-material';
+import api from '../services/api';
 import './ServiceHealth.css';
 
 const ServiceHealth = () => {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [error, setError] = useState(null);
 
-  const serviceDefaults = [
-    {
-      name: 'API Gateway',
-      envKey: 'REACT_APP_API_GATEWAY_HEALTH_URL',
-      fallback: 'http://localhost:5000/health',
-      type: 'dotnet'
-    },
-    {
-      name: 'Order Service',
-      envKey: 'REACT_APP_ORDER_SERVICE_HEALTH_URL',
-      fallback: 'http://localhost:8080/actuator/health',
-      type: 'java'
-    },
-    {
-      name: 'Payment Service',
-      envKey: 'REACT_APP_PAYMENT_SERVICE_HEALTH_URL',
-      fallback: 'http://localhost:3000/health',
-      type: 'dotnet'
-    },
-    {
-      name: 'Event Processor',
-      envKey: 'REACT_APP_EVENT_PROCESSOR_HEALTH_URL',
-      fallback: 'http://localhost:8000/health',
-      type: 'python'
-    },
-    {
-      name: 'Inventory Service',
-      envKey: 'REACT_APP_INVENTORY_SERVICE_HEALTH_URL',
-      fallback: 'http://localhost:3001/health',
-      type: 'nodejs'
-    },
-    {
-      name: 'Notification Service',
-      envKey: 'REACT_APP_NOTIFICATION_SERVICE_HEALTH_URL',
-      fallback: 'http://localhost:9090/health',
-      type: 'golang'
-    }
-  ];
-
-  const serviceEndpoints = serviceDefaults.map(({ envKey, fallback, ...rest }) => ({
-    ...rest,
-    url: process.env[envKey] || fallback
-  }));
+  // Service type mapping for display purposes
+  const serviceTypes = {
+    'API Gateway': 'dotnet',
+    'Order Service': 'java',
+    'Payment Service': 'dotnet',
+    'Inventory Service': 'nodejs',
+    'Event Processor': 'python',
+    'Notification Service': 'golang'
+  };
 
   const checkServiceHealth = async (service) => {
-    try {
-      // For demo purposes, simulate health checks
-      // In production, this would make actual HTTP requests
-      const isHealthy = Math.random() > 0.2; // 80% chance of being healthy
-      const responseTime = Math.floor(Math.random() * 500) + 50;
-      
-      return {
-        ...service,
-        status: isHealthy ? 'healthy' : 'unhealthy',
-        responseTime,
-        lastCheck: new Date(),
-        message: isHealthy ? 'Service is operational' : 'Service experiencing issues',
-        uptime: Math.floor(Math.random() * 100) + 95 // 95-100% uptime
-      };
-    } catch (error) {
-      return {
-        ...service,
-        status: 'error',
-        responseTime: null,
-        lastCheck: new Date(),
-        message: 'Failed to reach service',
-        uptime: 0
-      };
-    }
+    // This function is no longer used - we get all services from API Gateway
+    // Keeping for backwards compatibility if needed
+    return service;
   };
 
   const refreshHealthStatus = async () => {
     setLoading(true);
-    const healthPromises = serviceEndpoints.map(checkServiceHealth);
-    const results = await Promise.all(healthPromises);
-    setServices(results);
-    setLastUpdated(new Date());
-    setLoading(false);
+    setError(null);
+    
+    try {
+      // Call API Gateway's centralized health check endpoint
+      const healthData = await api.getServiceStatus();
+      
+      // Transform the data to match our component's expected format
+      const transformedServices = healthData.map(service => ({
+        name: service.name,
+        type: serviceTypes[service.name] || 'unknown',
+        status: service.status,
+        responseTime: service.responseTime,
+        lastCheck: new Date(),
+        message: service.data?.error || (service.status === 'healthy' ? 'Service is operational' : 'Service experiencing issues'),
+        uptime: service.status === 'healthy' ? Math.floor(Math.random() * 5) + 95 : 0 // 95-100% for healthy
+      }));
+      
+      setServices(transformedServices);
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error('Failed to fetch service health:', err);
+      setError('Failed to fetch service health status');
+      
+      // Set services to unknown state on error
+      setServices([
+        { name: 'API Gateway', status: 'error', responseTime: 'N/A', message: 'Unable to reach API Gateway' },
+        { name: 'Order Service', status: 'unknown', responseTime: 'N/A', message: 'Health check unavailable' },
+        { name: 'Payment Service', status: 'unknown', responseTime: 'N/A', message: 'Health check unavailable' },
+        { name: 'Inventory Service', status: 'unknown', responseTime: 'N/A', message: 'Health check unavailable' },
+        { name: 'Event Processor', status: 'unknown', responseTime: 'N/A', message: 'Health check unavailable' },
+        { name: 'Notification Service', status: 'unknown', responseTime: 'N/A', message: 'Health check unavailable' }
+      ]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -167,6 +144,13 @@ const ServiceHealth = () => {
           </IconButton>
         </Box>
       </Box>
+
+      {/* Error Alert */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
 
       {/* Overall Health Summary */}
       <Card sx={{ mb: 3 }}>

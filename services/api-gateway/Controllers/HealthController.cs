@@ -34,7 +34,7 @@ namespace ApiGateway.Controllers
             // Check all downstream services in parallel
             var tasks = new List<Task>
             {
-                CheckServiceHealth(services, "API Gateway", () => Task.FromResult((true, 0))),
+                CheckServiceHealth(services, "API Gateway", () => Task.FromResult((isHealthy: true, responseTimeMs: 0L))),
                 CheckServiceHealth(services, "Order Service", () => CheckHttpServiceHealth("OrderService", "/actuator/health")),
                 CheckServiceHealth(services, "Payment Service", () => CheckHttpServiceHealth("PaymentService", "/health")),
                 CheckServiceHealth(services, "Inventory Service", () => CheckHttpServiceHealth("InventoryService", "/health")),
@@ -72,7 +72,7 @@ namespace ApiGateway.Controllers
             {
                 case "api-gateway":
                 case "apigateway":
-                    await CheckServiceHealth(services, "API Gateway", () => Task.FromResult((true, 0)));
+                    await CheckServiceHealth(services, "API Gateway", () => Task.FromResult((isHealthy: true, responseTimeMs: 0L)));
                     break;
                     
                 case "order-service":

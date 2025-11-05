@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: notification-service
-        image: __ACR_LOGIN_SERVER__/notification-service:latest
+        image: acroteldemodemoo0ypvl.azurecr.io/notification-service:latest
         ports:
         - containerPort: 8080
         env:
@@ -34,8 +34,6 @@ spec:
           value: "notification-service"
         - name: OTEL_SERVICE_VERSION
           value: "1.0.0"
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: "http://localhost:4317"
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:

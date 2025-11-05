@@ -34,6 +34,23 @@ const fetchJsonOrThrow = async (url, options = {}) => {
   return response.json();
 };
 
+// Health check proxy endpoint
+app.get('/api/health/all', async (req, res) => {
+  try {
+    if (!SERVICES.apiGateway) {
+      res.status(502).json({ error: 'API Gateway endpoint is not configured.' });
+      return;
+    }
+
+    const healthUrl = `${trimTrailingSlash(SERVICES.apiGateway)}/api/health/all`;
+    const data = await fetchJsonOrThrow(healthUrl);
+    res.json(data);
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Proxy for inventory service
 app.get('/api/inventory', async (req, res) => {
   try {

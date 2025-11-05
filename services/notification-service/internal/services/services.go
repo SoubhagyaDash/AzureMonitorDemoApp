@@ -8,9 +8,8 @@ import (
 	"notification-service/internal/config"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs"
-	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/checkpoints"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -46,7 +45,6 @@ type EventHubService struct {
 	connectionString string
 	eventHubName     string
 	consumerClient   *azeventhubs.ConsumerClient
-	processor        *azeventhubs.Processor
 	consumerGroup    string
 }
 
@@ -59,9 +57,6 @@ func NewEventHubService(connectionString, eventHubName string) *EventHubService 
 }
 
 func (e *EventHubService) Close() error {
-	if e.processor != nil {
-		return e.processor.Close(context.Background())
-	}
 	if e.consumerClient != nil {
 		return e.consumerClient.Close(context.Background())
 	}
@@ -75,10 +70,14 @@ func (e *EventHubService) StartProcessing(ctx context.Context, handler func([]by
 		return nil
 	}
 
+	// Log connection details (sanitized)
+	log.Printf("Initializing Event Hub consumer with consumer group: %s", e.consumerGroup)
+	
 	// Create consumer client
+	// If connection string contains EntityPath, use empty string for eventHubName
 	consumerClient, err := azeventhubs.NewConsumerClientFromConnectionString(
 		e.connectionString,
-		e.eventHubName,
+		"", // Empty string because connection string contains EntityPath
 		e.consumerGroup,
 		nil,
 	)
@@ -87,21 +86,26 @@ func (e *EventHubService) StartProcessing(ctx context.Context, handler func([]by
 	}
 	e.consumerClient = consumerClient
 
-	log.Printf("Event Hub consumer client created for hub: %s, consumer group: %s", e.eventHubName, e.consumerGroup)
+	log.Printf("✓ Event Hub consumer client created successfully for consumer group: %s", e.consumerGroup)
 
-	// Get partition IDs
-	partitionIDs, err := consumerClient.GetPartitionIDs(ctx, nil)
+	// Get partition properties to find partition IDs
+	log.Println("Fetching Event Hub properties...")
+	props, err := consumerClient.GetEventHubProperties(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to get partition IDs: %w", err)
+		return fmt.Errorf("failed to get Event Hub properties: %w", err)
 	}
 
-	log.Printf("Event Hub has %d partitions", len(partitionIDs))
+	log.Printf("✓ Event Hub has %d partitions: %v", len(props.PartitionIDs), props.PartitionIDs)
+	log.Printf("✓ Event Hub name: %s", props.Name)
 
 	// Process messages from all partitions
-	for _, partitionID := range partitionIDs {
+	log.Println("Starting partition processors...")
+	for _, partitionID := range props.PartitionIDs {
+		log.Printf("→ Launching goroutine for partition %s", partitionID)
 		go e.processPartition(ctx, partitionID, handler)
 	}
 
+	log.Println("✓ All partition processors launched successfully")
 	return nil
 }
 
@@ -111,7 +115,7 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 
 	partitionClient, err := e.consumerClient.NewPartitionClient(partitionID, &azeventhubs.PartitionClientOptions{
 		StartPosition: azeventhubs.StartPosition{
-			Earliest: true, // Start from the beginning for demo purposes
+			Latest: to.Ptr(true), // Start from latest - only receive new messages
 		},
 	})
 	if err != nil {
@@ -120,20 +124,40 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 	}
 	defer partitionClient.Close(ctx)
 
+	log.Printf("Partition %s: partition client created, starting to receive events...", partitionID)
+
+	pollCount := 0
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("Context cancelled, stopping processing for partition: %s", partitionID)
 			return
 		default:
-			// Receive batch of events
-			events, err := partitionClient.ReceiveEvents(ctx, 10, &azeventhubs.ReceiveEventsOptions{
-				MaxWaitTime: 5 * time.Second,
-			})
+			pollCount++
+			// Log every 10th poll attempt to show we're actively polling
+			if pollCount%10 == 0 {
+				log.Printf("Partition %s: polling attempt #%d (still listening for events)", partitionID, pollCount)
+			}
+			
+			// Receive batch of events with timeout
+			receiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			log.Printf("Partition %s: calling ReceiveEvents (max 10 events, 30s timeout)...", partitionID)
+			events, err := partitionClient.ReceiveEvents(receiveCtx, 10, nil)
+			cancel()
+			
 			if err != nil {
 				log.Printf("ERROR: Failed to receive events from partition %s: %v", partitionID, err)
 				time.Sleep(5 * time.Second)
 				continue
+			}
+
+			log.Printf("Partition %s: ReceiveEvents returned %d events", partitionID, len(events))
+			
+			if len(events) > 0 {
+				log.Printf("Partition %s: PROCESSING %d events", partitionID, len(events))
+			} else {
+				// No events, sleep briefly to avoid tight loop
+				time.Sleep(1 * time.Second)
 			}
 
 			// Process each event
@@ -148,11 +172,7 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 				if err := handler(event.Body); err != nil {
 					log.Printf("ERROR: Handler failed for event from partition %s: %v", partitionID, err)
 					// Continue processing other events even if one fails
-					continue
 				}
-
-				// Log successful processing
-				log.Printf("Successfully processed event from partition %s", partitionID)
 			}
 		}
 	}
@@ -167,7 +187,7 @@ type OrderEvent struct {
 	Quantity    int       `json:"Quantity"`
 	TotalAmount float64   `json:"TotalAmount"`
 	Status      string    `json:"Status"`
-	Timestamp   time.Time `json:"Timestamp"`
+	Timestamp   string    `json:"Timestamp"` // Using string to handle .NET DateTime format
 }
 
 // ParseOrderEvent parses an order event from JSON
@@ -176,6 +196,24 @@ func ParseOrderEvent(data []byte) (*OrderEvent, error) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal order event: %w", err)
 	}
+	
+	// Parse the timestamp - try multiple formats to handle .NET DateTime serialization
+	if event.Timestamp != "" {
+		// Try parsing common formats
+		formats := []string{
+			time.RFC3339,                      // 2006-01-02T15:04:05Z07:00
+			time.RFC3339Nano,                  // 2006-01-02T15:04:05.999999999Z07:00
+			"2006-01-02T15:04:05.9999999",     // .NET DateTime without timezone
+			"2006-01-02T15:04:05",             // Simple ISO format
+		}
+		
+		for _, format := range formats {
+			if _, err := time.Parse(format, event.Timestamp); err == nil {
+				break
+			}
+		}
+	}
+	
 	return &event, nil
 }
 

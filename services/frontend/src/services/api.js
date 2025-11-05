@@ -83,16 +83,19 @@ const api = {
       // Call API Gateway's centralized health check endpoint
       const response = await apiGatewayClient.get('/api/health/all');
       
-      if (response.data && response.data.Services) {
+      // Handle both camelCase (services) and PascalCase (Services) for compatibility
+      const services = response.data?.services || response.data?.Services;
+      
+      if (services && Array.isArray(services)) {
         // Transform the response to match the expected format
-        return response.data.Services.map(service => ({
-          name: service.Name,
-          status: service.IsHealthy ? 'healthy' : 'unhealthy',
-          responseTime: `${service.ResponseTimeMs}ms`,
+        return services.map(service => ({
+          name: service.name || service.Name,
+          status: (service.isHealthy || service.IsHealthy) ? 'healthy' : 'unhealthy',
+          responseTime: `${service.responseTimeMs || service.ResponseTimeMs}ms`,
           data: {
-            status: service.Status,
-            lastChecked: service.LastChecked,
-            error: service.Error
+            status: service.status || service.Status,
+            lastChecked: service.lastChecked || service.LastChecked,
+            error: service.error || service.Error
           }
         }));
       }
