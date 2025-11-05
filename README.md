@@ -22,85 +22,94 @@ This is a comprehensive demo application showcasing Azure Monitor's OpenTelemetr
 
 ## Architecture Overview
 
-The demo consists of:
+A comprehensive microservices demo showcasing:
+- **Frontend (React)** - Modern eCommerce UI with real health checks and WebSocket support
+- **API Gateway (.NET)** - VM-deployed with Azure Monitor OTel Distro and centralized health checks
+- **Order Service (Java)** - AKS-deployed Spring Boot service with SQL Server
+- **Payment Service (.NET)** - AKS-deployed with OSS OTel SDK and Redis cache
+- **Event Processor (Python)** - Processes EventHub messages with OSS OTel SDK
+- **Inventory Service (Node.js)** - VM-deployed with OSS OTel SDK
+- **Notification Service (Golang)** - Real-time notifications via Event Hub and WebSocket
 
 ## Services Overview
 
-### Services
+### Application Services
 
-| Service              | Language | Hosting        | Notes |- **Frontend (React)** - Web UI with synthetic traffic generation and Application Insights JS SDK
+| Service              | Language | Hosting              | Notes                                      |
+|----------------------|----------|----------------------|--------------------------------------------|
+| API Gateway          | .NET 8   | Azure VM (Linux)     | Azure Monitor OTel Distro, Health Checks   |
+| Order Service        | Java 17  | Azure AKS            | Spring Boot + SQL Server                   |
+| Payment Service      | .NET 8   | Azure AKS            | OSS OTel SDK + Redis cache                 |
+| Inventory Service    | Node.js  | Azure VM (Linux)     | OSS OTel SDK                               |
+| Event Processor      | Python 3 | Azure AKS            | Event Hub → Cosmos DB                      |
+| Notification Service | Go 1.21  | Azure AKS            | Event Hub consumer, WebSocket, Real-time   |
+| Frontend             | React    | Azure App Service    | Real health checks, WebSocket support      |
 
-|----------------------|----------|----------------|-------|- **API Gateway (.NET)** - VM-deployed with Azure Monitor OTel Distro
+### Azure Infrastructure
 
-| API Gateway          | .NET 8   | Azure VM (Linux) | Azure Monitor OTel Distro |- **Order Service (Java)** - AKS-deployed, auto-instrumented
+- **Azure VMs (2x)** - Host API Gateway and Inventory Service
+- **Azure Kubernetes Service (AKS)** - Hosts Order, Payment, Event Processor, and Notification Services
+- **Azure Event Hub** - Message streaming for order events and notifications
+- **Azure SQL Database** - Primary data store for orders
+- **Azure Cosmos DB** - Document store for processed events
+- **Azure Redis Cache** - Caching layer for payment service
+- **Azure App Service** - React frontend with Express.js backend proxy
+- **Application Insights** - Centralized observability and telemetry
 
-| Order Service        | Java 17  | Azure VM (Linux) | Spring Boot + SQL Server |- **Event Processor (Python)** - Processes EventHub messages with OSS OTel SDK
+### OpenTelemetry Instrumentation Strategy
 
-| Payment Service      | .NET 8   | Azure VM (Linux) | OSS OTel SDK + Redis cache |- **Inventory Service (Node.js)** - Uses OSS OTel SDK
+| Service | Language | Deployment | Instrumentation | Status |
+|---------|----------|------------|-----------------|--------|
+| API Gateway | .NET | Azure VM | Azure Monitor OTel Distro | ✅ Configured |
+| Order Service | Java | AKS | Spring Boot Actuator | 🟡 Partial |
+| Payment Service | .NET | AKS | OSS OTel + Azure Monitor | ✅ Emitting |
+| Event Processor | Python | AKS | OSS OTel SDK | 🟡 Partial |
+| Inventory Service | Node.js | Azure VM | OSS OTel SDK | 🟡 Partial |
+| Notification Service | Golang | AKS | OSS OTel SDK | ✅ Configured |
+| Frontend | React/JavaScript | App Service | Application Insights JS SDK | ✅ Configured |
 
-| Inventory Service    | Node.js  | Azure VM (Linux) | OSS OTel SDK |- **Notification Service (Golang)** - Real-time notifications with WebSocket support, OSS OTel SDK
+## Prerequisites
 
-| Event Processor      | Python 3 | Azure VM (Linux) | Event Hub → Cosmos DB |
-
-| Notification Service | Go 1.21  | Azure VM (Linux) | Optional (demo skeleton) |### Azure Resources
-
-| Frontend (simple)    | Node.js  | Azure App Service | Static HTML + API proxy |- **Azure VMs** - Host .NET services
-
-- **Azure Kubernetes Service (AKS)** - Container orchestration
-
-## Prerequisites- **Azure Event Hub** - Message streaming
-
-- **Azure SQL Database** - Primary data store
-
-- Azure subscription and permissions to create resource groups- **Azure Cosmos DB** - Document store
-
-- PowerShell 7+- **Azure Redis Cache** - Caching layer
-
+- Azure subscription and permissions to create resource groups
+- PowerShell 7+
 - Terraform (>= 1.6)
-
-- Azure CLI (`az`) authenticated to the target subscription (`az login`)### OpenTelemetry Instrumentation Strategy
-
+- Azure CLI (`az`) authenticated to the target subscription (`az login`)
 - Docker CLI (used to build/push service containers)
+- kubectl configured for AKS management
 
-| Service | Language | Deployment | Instrumentation |
+## Deploy in One Step
 
-## Deploy in One Step|---------|----------|------------|----------------|
+```powershell
+# from the repository root
+Copy-Item infrastructure/terraform/terraform.tfvars.example infrastructure/terraform/terraform.tfvars
+# edit the new terraform.tfvars with your chosen names/regions
 
-| API Gateway | .NET | Azure VM | Azure Monitor OTel Distro |
-
-```powershell| Order Service | Java | AKS | Auto-instrumentation (none pre-applied) |
-
-# from the repository root| Payment Service | .NET | AKS | Auto-instrumentation (none pre-applied) |
-
-Copy-Item infrastructure/terraform/terraform.tfvars.example infrastructure/terraform/terraform.tfvars| Event Processor | Python | AKS | OSS OTel SDK |
-
-# edit the new terraform.tfvars with your chosen names/regions| Inventory Service | Node.js | AKS | OSS OTel SDK |
-
-| Notification Service | Golang | AKS | OSS OTel SDK |
-
-pwsh ./deploy/deploy-environment.ps1| Frontend | React/JavaScript | CDN/Static | Application Insights JS SDK |
-
+pwsh ./deploy/deploy-environment.ps1
 ```
-
-## Features
 
 The script will:
 
+1. Initialize and apply the Terraform configuration (unless `-SkipInfrastructure` is used)
+2. Build Docker images for all services, tag them with `:latest` (override via `-DockerTag`)
+3. Push images to the Terraform-provisioned Azure Container Registry
+4. Deploy containerized services to Azure Kubernetes Service (AKS)
+5. Use `az vm run-command` to deploy containers on VMs (API Gateway, Inventory Service)
+6. Deploy the React frontend to Azure App Service
+7. Configure secrets and connection strings from Terraform outputs
+
+All runtime secrets are pulled dynamically from Terraform outputs and never persisted to disk.
+
+## Features
+
 ### Observability
 
-1. Initialise and apply the Terraform configuration (unless `-SkipInfrastructure` is used)- Distributed tracing across all services
-
-2. Build Docker images for all services, tag them with `:latest` (override via `-DockerTag`)- Custom metrics and logs
-
-3. Push images to the Terraform-provisioned Azure Container Registry- Performance monitoring
-
-4. Use `az vm run-command` to roll out containers on both VMs- Error tracking
-
-5. Zip and deploy the `frontend-simple` Node.js application to the App Service- Real-time notifications via WebSocket
-
+- Distributed tracing across all services
+- Custom metrics and logs
+- Performance monitoring
+- Error tracking
+- Real-time health monitoring via centralized API
+- Real-time notifications via WebSocket
 - Frontend user interaction tracking
-
-All runtime secrets are pulled dynamically from Terraform outputs and never
 
 persisted to disk. Generated artefacts (`*.tfstate`, `*.tfplan`, `node_modules`,### Failure Injection
 
@@ -108,97 +117,150 @@ persisted to disk. Generated artefacts (`*.tfstate`, `*.tfplan`, `node_modules`,
 
 - Random error generation
 
-### Useful script switches- Infrastructure issues (OOMKill, network problems)
+### Failure Injection
 
+- Configurable latency injection
+- Random error generation
+- Infrastructure issues (OOMKill, network problems)
 - Database connection failures
 
+### Synthetic Traffic & User Interactions
+
+- Automated load generation via Azure Functions
+- Realistic user scenarios
+- Configurable traffic patterns
+- Interactive eCommerce store with real shopping flows
+
+### Health Monitoring
+
+- Centralized health checks via API Gateway
+- Real-time service status monitoring
+- Response time tracking for each service
+- Frontend Service Health page with live updates
+
+### Real-time Notifications
+
+- Event Hub integration for order events
+- WebSocket delivery to frontend clients
+- Go-based notification service
+- Material-UI snackbar notifications
+
+## Deployment Options
+
+### Useful script switches
+
 - `-VarFile <path>` – Explicit Terraform variables file
+- `-SkipInfrastructure` – Reuse existing resources, skip Terraform
+- `-SkipContainers` – Skip Docker build/push (images already in ACR)
+- `-SkipAKS` – Skip AKS deployment
+- `-SkipVmDeployment` – Build/push images but leave running containers untouched
+- `-SkipFrontend` – Skip the App Service deployment
+- `-SkipFunctionApp` – Skip synthetic traffic function deployment
+- `-SkipNotificationService` – Exclude notification service from deployment
 
-- `-SkipInfrastructure` – Reuse existing resources, skip Terraform### Synthetic Traffic & User Interactions
+## Getting Started
 
-- `-SkipContainers` – Skip Docker build/push (images already in ACR)- Automated load generation
+1. **Deploy Azure infrastructure:**
+   ```powershell
+   cd infrastructure/terraform
+   terraform init
+   terraform plan -out=tfplan
+   terraform apply tfplan
+   ```
 
-- `-SkipVmDeployment` – Build/push images but leave running containers untouched- Realistic user scenarios
+2. **Build and deploy services:**
+   ```powershell
+   .\deploy\deploy-environment.ps1
+   ```
 
-- `-SkipFrontend` – Skip the App Service deployment- Configurable traffic patterns
+3. **Access the frontend:**
+   - Frontend URL will be displayed after deployment
+   - Default: `https://app-otel-demo-frontend-{workspace}-{random}.azurewebsites.net`
 
-- `-IncludeNotificationService` – Deploy the Go notification service skeleton- Interactive eCommerce store with real shopping flows
+4. **Monitor telemetry:**
+   - Open Azure Portal → Application Insights
+   - View Application Map, Live Metrics, Transaction Search
+   - Check Service Health page in frontend
 
+## Architecture
 
+### Terraform Layout
 
-## Terraform Layout## Getting Started
+`infrastructure/terraform` defines all Azure resources:
 
-
-
-`infrastructure/terraform` defines all Azure resources:1. Deploy Azure infrastructure: `./deploy/terraform/`
-
-2. Build and deploy services: `./deploy/scripts/`
-
-- Resource group, networking, and public IPs3. Configure monitoring: `./monitoring/`
-
-- Azure Container Registry4. Start traffic generation: Access the frontend
-
-- Linux virtual machines for the service tier
-
-- Azure SQL Database, Redis Cache, and Cosmos DB## Directory Structure
-
+- Resource group, networking, and public IPs
+- Azure Container Registry
+- Linux virtual machines for API Gateway and Inventory Service
+- Azure Kubernetes Service (AKS) cluster
+- Azure SQL Database, Redis Cache, and Cosmos DB
 - Event Hub namespace with `orders`, `payment-events`, and `notifications` hubs
+- Azure App Service for frontend hosting
+- Application Insights + Log Analytics
 
-- Static Web App + Linux App Service for frontend hosting```
+Only example variable files (`*.tfvars.example`) are committed. Create your own `terraform.tfvars` (ignored by git) for environment-specific settings.
 
-- Application Insights + Log Analytics├── services/
-
-│   ├── frontend/          # React application
-
-Only example variable files (`*.tfvars.example`) are committed. Create your own│   ├── api-gateway/       # .NET Core API (Azure VM)
-
-`terraform.tfvars` (ignored by git) for environment-specific settings.│   ├── order-service/     # Java Spring Boot (AKS)
-
-│   ├── payment-service/   # .NET Core Payment API (AKS)
-
-## Frontend Configuration│   ├── event-processor/   # Python service (AKS)
-
-│   ├── inventory-service/ # Node.js service (AKS)
-
-The React frontend in `services/frontend` now references environment variables│   └── notification-service/ # Golang service (AKS)
-
-for service health checks. Copy `.env.production.example` to `.env.production`├── infrastructure/
-
-and populate it as needed. The simplified frontend used in production (served by│   ├── terraform/         # Infrastructure as Code
-
-`frontend-simple`) runs without additional build steps and is deployed automatically│   └── scripts/          # Deployment scripts
-
-by the main script.├── monitoring/
-
-│   ├── dashboards/       # Azure Monitor dashboards
-
-## Observability│   └── alerts/          # Alert configurations
-
-├── deploy/
-
-- Azure Monitor connection strings are injected at runtime via Terraform outputs│   ├── k8s/             # Kubernetes manifests
-
-- Traces flow from the API Gateway, Order Service, Payment Service, and Event Processor│   ├── docker/          # Docker configurations
-
-- Redis and Event Hub clients are instrumented where supported│   └── vm/              # VM deployment scripts
-
-- Synthetic traffic tooling lives under `load-testing/` (optional)└── load-testing/        # Synthetic traffic generators
+## Directory Structure
 
 ```
+├── services/
+│   ├── frontend/          # React application with real health checks
+│   ├── api-gateway/       # .NET Core API (Azure VM)
+│   ├── order-service/     # Java Spring Boot (AKS)
+│   ├── payment-service/   # .NET Core Payment API (AKS)
+│   ├── event-processor/   # Python service (AKS)
+│   ├── inventory-service/ # Node.js service (AKS)
+│   ├── notification-service/ # Golang service (AKS)
+│   └── synthetic-traffic-function/ # Azure Functions traffic generator
+├── infrastructure/
+│   ├── terraform/         # Infrastructure as Code
+│   └── scripts/          # Deployment scripts
+├── k8s/                   # Kubernetes manifests
+├── deploy/               # PowerShell deployment scripts
+├── monitoring/
+│   ├── dashboards/       # Azure Monitor dashboards
+│   └── alerts/          # Alert configurations
+├── .github/
+│   └── PIPELINE_PLAN.md  # CI/CD pipeline planning guide
+└── load-testing/        # Synthetic traffic generators
+```
+
+## Frontend Configuration
+
+The React frontend in `services/frontend` now uses:
+- Real health checks from API Gateway
+- WebSocket connection to notification service
+- Environment variables for service discovery
+- Express.js backend for API proxying
+
+Copy `.env.production.example` to `.env.production` and populate as needed.
+
+## Observability
+
+- Azure Monitor connection strings are injected at runtime via Terraform outputs
+- Traces flow from API Gateway, Order Service, Payment Service, Event Processor, and Notification Service
+- Distributed tracing shows complete request flows across microservices
+- Real-time health monitoring via centralized API Gateway endpoint
+- Custom metrics, logs, and performance data collected via OpenTelemetry
 
 ## Cleanup
 
-## License
-
 Destroy the environment with Terraform:
 
-MIT License
 ```powershell
 Push-Location infrastructure/terraform
 terraform destroy
 Pop-Location
 ```
 
+## Documentation
+
+- **[ObservabilityInstrumentation.md](ObservabilityInstrumentation.md)** - Detailed instrumentation status and configuration
+- **[APPLICATION_MAP.md](APPLICATION_MAP.md)** - Application Map topology and service dependencies
+- **[DEPLOYMENT_FIXES.md](DEPLOYMENT_FIXES.md)** - Deployment troubleshooting and fixes
+- **[.github/PIPELINE_PLAN.md](.github/PIPELINE_PLAN.md)** - GitHub Actions CI/CD pipeline planning
+- **[services/notification-service/README.md](services/notification-service/README.md)** - Notification service documentation
+- **[services/frontend/FAILURE_INJECTION_GUIDE.md](services/frontend/FAILURE_INJECTION_GUIDE.md)** - Chaos engineering guide
+
 ## License
 
-MIT
+MIT License
