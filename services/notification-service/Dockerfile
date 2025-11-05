@@ -34,7 +34,7 @@ WORKDIR /root/
 # Copy the binary from the builder stage
 COPY --from=builder /app/main .
 
-# Expose the port the app runs on
+# Expose the port the app runs on (matches main.go default: 8080)
 EXPOSE 8080
 
 # Run the application
