@@ -1,6 +1,9 @@
-using Azure.Monitor.OpenTelemetry.AspNetCore;
 using ApiGateway.Services;
 using System.Diagnostics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Logs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -56,10 +59,72 @@ builder.Services.AddHttpClient("NotificationService", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
-// Configure Azure Monitor OpenTelemetry
-builder.Services.AddOpenTelemetry().UseAzureMonitor(options =>
+// Configure OpenTelemetry
+var serviceName = "api-gateway";
+var serviceVersion = "1.0.0";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: serviceName, serviceVersion: serviceVersion)
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["deployment.environment"] = builder.Environment.EnvironmentName,
+            ["service.instance.id"] = Environment.MachineName
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.Filter = (httpContext) => !httpContext.Request.Path.StartsWithSegments("/health");
+        })
+        .AddHttpClientInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.FilterHttpRequestMessage = (httpRequestMessage) =>
+            {
+                return !httpRequestMessage.RequestUri?.AbsolutePath.Contains("/health") ?? true;
+            };
+        })
+        .AddRedisInstrumentation()
+        .AddSource(serviceName)
+        .AddConsoleExporter()
+        .AddOtlpExporter(options =>
+        {
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
+        })
+        .AddAzureMonitorTraceExporter(options =>
+        {
+            options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+        }))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter(serviceName)
+        .AddConsoleExporter()
+        .AddOtlpExporter(options =>
+        {
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
+        })
+        .AddAzureMonitorMetricExporter(options =>
+        {
+            options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+        }));
+
+// Configure OpenTelemetry Logging
+builder.Logging.AddOpenTelemetry(logging =>
 {
-    options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+    logging.IncludeFormattedMessage = true;
+    logging.IncludeScopes = true;
+    logging.AddConsoleExporter();
+    logging.AddOtlpExporter(options =>
+    {
+        options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
+    });
+    logging.AddAzureMonitorLogExporter(options =>
+    {
+        options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+    });
 });
 
 // Add CORS
