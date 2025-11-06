@@ -1,0 +1,11 @@
+apiVersion: monitor.azure.com/v1
+kind: Instrumentation
+metadata:
+  name: otel-demo-instrumentation
+  namespace: otel-demo
+spec:
+  destination:
+    applicationInsightsConnectionString: "InstrumentationKey=91a6b0e6-35a8-4162-b258-244b66701b67;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/;LiveEndpoint=https://westus2.livediagnostics.monitor.azure.com/;ApplicationId=59674a38-3ed7-4ff8-a5ae-734288ae97b9"
+  settings:
+    # Empty array means opt out of auto-instrumentation while still propagating shared configuration
+    autoInstrumentationPlatforms: []

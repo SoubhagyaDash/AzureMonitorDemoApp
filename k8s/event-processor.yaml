@@ -14,10 +14,12 @@ spec:
     metadata:
       labels:
         app: event-processor
+      annotations:
+        instrumentation.opentelemetry.io/inject-configuration: "otel-demo-instrumentation"
     spec:
       containers:
       - name: event-processor
-        image: __ACR_LOGIN_SERVER__/event-processor:latest
+        image: acroteldemodemoo0ypvl.azurecr.io/event-processor:latest
         ports:
         - containerPort: 8000
         env:

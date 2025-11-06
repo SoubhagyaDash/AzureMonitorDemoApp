@@ -49,7 +49,25 @@ variable "aks_vm_size" {
 variable "kubernetes_version" {
   description = "Kubernetes version for AKS"
   type        = string
-  default     = "1.29"  # Changed from 1.28 (LTS-only) to supported version
+  default     = "1.31.11"  # Stable version with AKS Long Term Support (sequential upgrade from 1.29)
+}
+
+variable "aks_enable_autoscale" {
+  description = "Enable autoscaling for AKS default node pool"
+  type        = bool
+  default     = true
+}
+
+variable "aks_min_count" {
+  description = "Minimum number of nodes when autoscaling is enabled"
+  type        = number
+  default     = 2
+}
+
+variable "aks_max_count" {
+  description = "Maximum number of nodes when autoscaling is enabled"
+  type        = number
+  default     = 10
 }
 
 # VM Configuration

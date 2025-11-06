@@ -9,10 +9,15 @@ resource "azurerm_kubernetes_cluster" "main" {
   support_plan       = "AKSLongTermSupport"
 
   default_node_pool {
-    name           = "default"
-    node_count     = var.aks_node_count
-    vm_size        = var.aks_vm_size
-    vnet_subnet_id = azurerm_subnet.aks_subnet.id
+    name                = "default"
+    vm_size             = var.aks_vm_size
+    vnet_subnet_id      = azurerm_subnet.aks_subnet.id
+    
+    # Autoscaling configuration
+    enable_auto_scaling = var.aks_enable_autoscale
+    node_count          = var.aks_enable_autoscale ? null : var.aks_node_count
+    min_count           = var.aks_enable_autoscale ? var.aks_min_count : null
+    max_count           = var.aks_enable_autoscale ? var.aks_max_count : null
     
     upgrade_settings {
       max_surge = "10%"

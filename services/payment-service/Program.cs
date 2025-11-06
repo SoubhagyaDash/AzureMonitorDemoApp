@@ -4,68 +4,105 @@ using PaymentService.Services;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Metrics;
-using Azure.Monitor.OpenTelemetry.Exporter;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Exporter;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // OpenTelemetry Configuration
 var serviceName = "payment-service";
 var serviceVersion = "1.0.0";
-var instrumentationKey = builder.Configuration["APPLICATIONINSIGHTS_INSTRUMENTATION_KEY"] 
-    ?? builder.Configuration["ApplicationInsights:InstrumentationKey"]
-    ?? Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_INSTRUMENTATION_KEY");
+
+// Read OTLP endpoints from environment (injected by Azure Monitor)
+var otlpTracesEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+var otlpMetricsEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT");
+var otlpLogsEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT");
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
-        .AddService(serviceName: serviceName, serviceVersion: serviceVersion))
-    .WithTracing(tracing => tracing
-        .AddAspNetCoreInstrumentation(options =>
+        .AddService(serviceName: serviceName, serviceVersion: serviceVersion)
+        .AddAttributes(new Dictionary<string, object>
         {
-            options.RecordException = true;
-            options.EnrichWithHttpRequest = (activity, httpRequest) =>
-            {
-                activity.SetTag("http.request.body_size", httpRequest.ContentLength);
-            };
-            options.EnrichWithHttpResponse = (activity, httpResponse) =>
-            {
-                activity.SetTag("http.response.status_code", httpResponse.StatusCode);
-            };
-        })
-        .AddHttpClientInstrumentation(options =>
-        {
-            options.RecordException = true;
-            options.EnrichWithHttpRequestMessage = (activity, httpRequest) =>
-            {
-                activity.SetTag("http.request.method", httpRequest.Method.Method);
-            };
-        })
-        .AddEntityFrameworkCoreInstrumentation(options =>
-        {
-            options.SetDbStatementForText = true;
-            options.EnrichWithIDbCommand = (activity, command) =>
-            {
-                activity.SetTag("db.command_text", command.CommandText);
-            };
-        })
-        .AddSource(serviceName)
-        .AddAzureMonitorTraceExporter(options =>
-        {
-            if (!string.IsNullOrEmpty(instrumentationKey))
-            {
-                options.ConnectionString = $"InstrumentationKey={instrumentationKey}";
-            }
+            ["deployment.environment"] = builder.Environment.EnvironmentName,
+            ["deployment.platform"] = "kubernetes",
+            ["deployment.cloud"] = "azure"
         }))
-    .WithMetrics(metrics => metrics
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddMeter(serviceName)
-        .AddAzureMonitorMetricExporter(options =>
-        {
-            if (!string.IsNullOrEmpty(instrumentationKey))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddAspNetCoreInstrumentation(options =>
             {
-                options.ConnectionString = $"InstrumentationKey={instrumentationKey}";
-            }
-        }));
+                options.RecordException = true;
+                options.EnrichWithHttpRequest = (activity, httpRequest) =>
+                {
+                    activity.SetTag("http.request.body_size", httpRequest.ContentLength);
+                };
+                options.EnrichWithHttpResponse = (activity, httpResponse) =>
+                {
+                    activity.SetTag("http.response.status_code", httpResponse.StatusCode);
+                };
+            })
+            .AddHttpClientInstrumentation(options =>
+            {
+                options.RecordException = true;
+                options.EnrichWithHttpRequestMessage = (activity, httpRequest) =>
+                {
+                    activity.SetTag("http.request.method", httpRequest.Method.Method);
+                };
+            })
+            .AddEntityFrameworkCoreInstrumentation(options =>
+            {
+                options.SetDbStatementForText = true;
+                options.EnrichWithIDbCommand = (activity, command) =>
+                {
+                    activity.SetTag("db.command_text", command.CommandText);
+                };
+            })
+            .AddSource(serviceName);
+
+        // Use OTLP exporter if traces endpoint is configured
+        if (!string.IsNullOrEmpty(otlpTracesEndpoint))
+        {
+            tracing.AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(otlpTracesEndpoint);
+                options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            });
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddMeter(serviceName);
+
+        // Use OTLP exporter if metrics endpoint is configured
+        if (!string.IsNullOrEmpty(otlpMetricsEndpoint))
+        {
+            metrics.AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(otlpMetricsEndpoint);
+                options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            });
+        }
+    });
+
+// Configure logging with OTLP export
+builder.Logging.AddOpenTelemetry(logging =>
+{
+    logging.IncludeFormattedMessage = true;
+    logging.IncludeScopes = true;
+    
+    if (!string.IsNullOrEmpty(otlpLogsEndpoint))
+    {
+        logging.AddOtlpExporter(options =>
+        {
+            options.Endpoint = new Uri(otlpLogsEndpoint);
+            options.Protocol = OtlpExportProtocol.HttpProtobuf;
+        });
+    }
+});
 
 // Add services to the container.
 builder.Services.AddControllers()

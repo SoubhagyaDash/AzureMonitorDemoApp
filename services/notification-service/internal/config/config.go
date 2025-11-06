@@ -11,8 +11,10 @@ type Config struct {
 	Environment string
 
 	// OpenTelemetry configuration
-	OTLPEndpoint string
-	ServiceName  string
+	OTLPTracesEndpoint  string
+	OTLPMetricsEndpoint string
+	OTLPLogsEndpoint    string
+	ServiceName         string
 
 	// Redis configuration
 	RedisURL string
@@ -60,8 +62,10 @@ func Load() *Config {
 		Environment: getEnv("ENVIRONMENT", "development"),
 
 		// OpenTelemetry
-		OTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		ServiceName:  getEnv("OTEL_SERVICE_NAME", "notification-service"),
+		OTLPTracesEndpoint:  getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""),
+		OTLPMetricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", ""),
+		OTLPLogsEndpoint:    getEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", ""),
+		ServiceName:         getEnv("OTEL_SERVICE_NAME", "notification-service"),
 
 		// Redis
 		RedisURL: getEnv("REDIS_URL", "redis://localhost:6379"),

@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: order-service
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "otel-demo-instrumentation"
     spec:
       containers:
       - name: order-service
@@ -69,14 +71,14 @@ spec:
           httpGet:
             path: /actuator/health/liveness
             port: 8080
-          initialDelaySeconds: 90
+          initialDelaySeconds: 150
           periodSeconds: 15
           failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /actuator/health/readiness
             port: 8080
-          initialDelaySeconds: 90
+          initialDelaySeconds: 150
           periodSeconds: 15
           failureThreshold: 5
 ---

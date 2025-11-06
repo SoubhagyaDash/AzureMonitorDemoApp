@@ -328,6 +328,23 @@ if (-not $SkipAKS) {
     Write-Host "  → Creating otel-demo namespace" -ForegroundColor Yellow
     kubectl create namespace otel-demo --dry-run=client -o yaml | kubectl apply -f -
     
+    # Apply Instrumentation Custom Resource for Azure Monitor app monitoring
+    Write-Host "  → Applying Azure Monitor Instrumentation CR" -ForegroundColor Yellow
+    $instrumentationManifest = Join-Path $repoRoot "k8s/instrumentation-otel-demo.yaml"
+    if (Test-Path $instrumentationManifest) {
+        # Read manifest and replace connection string placeholder
+        $instrumentationContent = Get-Content $instrumentationManifest -Raw
+        $instrumentationContent = $instrumentationContent -replace '__APP_INSIGHTS_CONNECTION_STRING__', $appInsightsConnectionString
+        
+        $tempInstrumentationFile = Join-Path ([System.IO.Path]::GetTempPath()) "instrumentation-otel-demo-$([System.Guid]::NewGuid().ToString('N')).yaml"
+        $instrumentationContent | Set-Content -Path $tempInstrumentationFile -NoNewline
+        
+        kubectl apply -f $tempInstrumentationFile
+        Remove-Item $tempInstrumentationFile -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Warning "Instrumentation manifest not found: $instrumentationManifest. Skipping Azure Monitor app monitoring setup."
+    }
+    
     # Create Kubernetes secret with connection strings
     Write-Host "  → Creating secrets" -ForegroundColor Yellow
     $secretData = @{

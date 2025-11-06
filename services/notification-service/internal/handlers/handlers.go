@@ -1,15 +1,20 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"notification-service/internal/models"
 	"notification-service/internal/services"
+	"notification-service/internal/telemetry"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type NotificationHandler struct {
@@ -120,12 +125,37 @@ func (h *NotificationHandler) HandleWebSocket(c *gin.Context) {
 }
 
 func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
+	start := time.Now()
+	ctx := context.Background()
+	
+	// Create a span for event processing
+	ctx, span := telemetry.Tracer.Start(ctx, "ProcessEventHubMessage",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.Int("message.size", len(message)),
+		),
+	)
+	defer span.End()
+
 	// Parse the order event
 	event, err := services.ParseOrderEvent(message)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to parse event")
 		log.Printf("Failed to parse event: %v", err)
+		
+		// Record error metric
+		telemetry.RecordEventHubMessage(ctx, "unknown", "unknown", false, time.Since(start).Seconds())
 		return err
 	}
+
+	// Add event details to span
+	span.SetAttributes(
+		attribute.String("event.type", event.EventType),
+		attribute.String("order.id", event.OrderID),
+		attribute.String("customer.id", event.CustomerID),
+		attribute.Float64("order.total_amount", event.TotalAmount),
+	)
 
 	log.Printf("Processing %s event for Order ID: %s, Customer ID: %s", 
 		event.EventType, event.OrderID, event.CustomerID)
@@ -185,15 +215,35 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 		}
 	}
 
-	// Send notification via WebSocket
-	if err := h.wsHub.SendToCustomer(event.CustomerID, notification); err != nil {
+	// Send notification via WebSocket with telemetry
+	wsStart := time.Now()
+	err = h.wsHub.SendToCustomer(event.CustomerID, notification)
+	wsDuration := time.Since(wsStart).Seconds()
+	
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to send WebSocket notification")
 		log.Printf("Failed to send WebSocket notification: %v", err)
+		
+		// Record WebSocket error metric
+		telemetry.RecordWebSocketMessage(ctx, event.CustomerID, event.EventType, false, wsDuration)
+		telemetry.RecordNotificationError(ctx, event.EventType, "websocket", err.Error())
+		
 		// Don't return error - WebSocket failure shouldn't fail event processing
 	} else {
 		log.Printf("Sent %s notification to customer %s via WebSocket", 
 			event.EventType, event.CustomerID)
+		
+		// Record successful WebSocket delivery
+		telemetry.RecordWebSocketMessage(ctx, event.CustomerID, event.EventType, true, wsDuration)
+		telemetry.RecordNotificationSent(ctx, event.EventType, "websocket")
 	}
 
+	// Record successful event processing
+	duration := time.Since(start).Seconds()
+	telemetry.RecordEventHubMessage(ctx, "unknown-partition", event.EventType, true, duration)
+	
+	span.SetStatus(codes.Ok, "Event processed successfully")
 	return nil
 }
 

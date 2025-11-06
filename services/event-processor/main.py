@@ -30,7 +30,10 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 # from opentelemetry.instrumentation.azure_eventhub import AzureEventHubInstrumentor  # Not available
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
@@ -39,41 +42,67 @@ from opentelemetry.trace import Status, StatusCode
 
 # Configure OpenTelemetry
 def setup_telemetry():
-    """Setup OpenTelemetry with OSS SDK - telemetry export disabled for now"""
+    """Setup OpenTelemetry with OSS SDK for OTLP export to Azure Monitor"""
     
-    # Configure tracing with basic provider (no exporter)
-    trace.set_tracer_provider(TracerProvider(
-        resource=Resource.create({
-            "service.name": "event-processor",
-            "service.version": "1.0.0",
-            "deployment.environment": os.getenv("ENVIRONMENT", "development")
-        })
-    ))
+    # Read OTLP endpoints from environment (will be injected by Azure Monitor)
+    otlp_traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    otlp_metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    otlp_logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
     
-    # OTLP exporter disabled - no collector available
-    # otlp_exporter = OTLPSpanExporter(
-    #     endpoint=os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://localhost:4317"),
-    #     insecure=True
-    # )
-    # span_processor = BatchSpanProcessor(otlp_exporter)
-    # trace.get_tracer_provider().add_span_processor(span_processor)
+    # Configure resource attributes
+    resource = Resource.create({
+        "service.name": "event-processor",
+        "service.version": "1.0.0",
+        "deployment.environment": os.getenv("ENVIRONMENT", "production"),
+        "deployment.platform": "kubernetes",
+        "deployment.cloud": "azure"
+    })
     
-    # Configure metrics with basic provider (no exporter)
-    metrics.set_meter_provider(MeterProvider(
-        resource=Resource.create({
-            "service.name": "event-processor",
-            "service.version": "1.0.0"
-        })
-    ))
+    # Configure tracing
+    trace_provider = TracerProvider(resource=resource)
     
-    # Metrics export disabled
-    # metric_reader = PeriodicExportingMetricReader(
-    #     OTLPMetricExporter(
-    #         endpoint=os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:4317"),
-    #         insecure=True
-    #     ),
-    #     export_interval_millis=30000
-    # )
+    # Add OTLP span exporter if endpoint is configured
+    if otlp_traces_endpoint:
+        otlp_exporter = OTLPSpanExporter(
+            endpoint=otlp_traces_endpoint,
+            insecure=True
+        )
+        span_processor = BatchSpanProcessor(otlp_exporter)
+        trace_provider.add_span_processor(span_processor)
+    
+    trace.set_tracer_provider(trace_provider)
+    
+    # Configure metrics
+    if otlp_metrics_endpoint:
+        metric_reader = PeriodicExportingMetricReader(
+            OTLPMetricExporter(
+                endpoint=otlp_metrics_endpoint,
+                insecure=True
+            ),
+            export_interval_millis=30000
+        )
+        metrics.set_meter_provider(MeterProvider(
+            resource=resource,
+            metric_readers=[metric_reader]
+        ))
+    else:
+        metrics.set_meter_provider(MeterProvider(resource=resource))
+    
+    # Configure logging
+    if otlp_logs_endpoint:
+        logger_provider = LoggerProvider(resource=resource)
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(
+                OTLPLogExporter(
+                    endpoint=otlp_logs_endpoint,
+                    insecure=True
+                )
+            )
+        )
+        
+        # Add OTLP handler to Python logging
+        handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+        logging.getLogger().addHandler(handler)
     
     # Enable automatic instrumentation
     # AzureEventHubInstrumentor().instrument()  # Not available in this version
