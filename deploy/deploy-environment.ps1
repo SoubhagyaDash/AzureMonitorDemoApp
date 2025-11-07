@@ -19,6 +19,7 @@ loaded from Terraform outputs at execution time and never written to disk.
 param(
     [string]$VarFile,
     [string]$DockerTag = "latest",
+    [string]$AppInsightsConnectionString,
     [switch]$SkipInfrastructure,
     [switch]$SkipContainers,
     [switch]$SkipAKS,
@@ -175,7 +176,18 @@ $acrName = $terraformOutput.acr_name.value
 $acrLoginServer = $terraformOutput.acr_login_server.value
 $acrAdminUsername = $terraformOutput.acr_admin_username.value
 $acrAdminPassword = $terraformOutput.acr_admin_password.value
-$appInsightsConnectionString = $terraformOutput.application_insights_connection_string.value
+$appInsightsConnectionString = if ($AppInsightsConnectionString) { $AppInsightsConnectionString } else { $terraformOutput.application_insights_connection_string.value }
+
+# Extract Application ID from connection string (from ApplicationId parameter at the end)
+# Format: InstrumentationKey=xxx;IngestionEndpoint=...;LiveEndpoint=...;ApplicationId=e4580258-7369-47ea-a880-d85e204cfe5d
+$appInsightsApplicationId = if ($appInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
+    $matches[1]
+} else {
+    Write-Warning "Could not extract Application ID from connection string. Falling back to Terraform output."
+    $terraformOutput.application_insights_application_id.value
+}
+Write-Host "Using Application Insights Application ID: $appInsightsApplicationId" -ForegroundColor Green
+
 $connectionStrings = $terraformOutput.connection_strings.value
 $serviceEndpoints = $terraformOutput.service_endpoints.value
 $vmNames = @($terraformOutput.vm_names.value)
@@ -464,6 +476,8 @@ if (-not $SkipAKS) {
     $orderServicePort = $null
     $paymentServicePort = $null
     $eventProcessorPort = $null
+    $notificationServicePort = $null
+    $notificationServiceUrl = $null
 }
 
 # Now deploy to VMs with the actual AKS NodePort URLs
@@ -489,7 +503,9 @@ if (-not $SkipVmDeployment) {
         "SERVICE_NAME" = "inventory-service"
         "SERVICE_VERSION" = "1.0.0"
         "APPLICATIONINSIGHTS_CONNECTION_STRING" = $appInsightsConnectionString
+        "APPLICATION_INSIGHTS_APPLICATION_ID" = $appInsightsApplicationId
         "REDIS_URL" = $redisUrl
+        "OTEL_EXPORTER_OTLP_ENDPOINT" = "http://localhost:4319"
     }))
 
     # VM2: API Gateway (will connect to AKS-hosted services)
@@ -511,6 +527,7 @@ if (-not $SkipVmDeployment) {
         "ASPNETCORE_ENVIRONMENT" = "Production"
         "ASPNETCORE_URLS" = "http://+:5000"
         "ApplicationInsights__ConnectionString" = $appInsightsConnectionString
+        "APPLICATION_INSIGHTS_APPLICATION_ID" = $appInsightsApplicationId
         "Redis__ConnectionString" = $connectionStrings.redis
         "EventHub__ConnectionString" = $connectionStrings.eventhub_orders
         "EventHub__Name" = "orders"
@@ -519,6 +536,7 @@ if (-not $SkipVmDeployment) {
         "Services__PaymentService__BaseUrl" = $aksPaymentServiceUrl
         "Services__EventProcessor__BaseUrl" = $aksEventProcessorUrl
         "FailureInjection__Enabled" = "false"
+        "OTEL_EXPORTER_OTLP_ENDPOINT" = "http://localhost:4319"
     }
     
     # Add notification service URL if enabled

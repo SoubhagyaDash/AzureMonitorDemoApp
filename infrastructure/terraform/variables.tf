@@ -49,7 +49,7 @@ variable "aks_vm_size" {
 variable "kubernetes_version" {
   description = "Kubernetes version for AKS"
   type        = string
-  default     = "1.31.11"  # Stable version with AKS Long Term Support (sequential upgrade from 1.29)
+  default     = "1.33.3"  # Latest stable version with AKS Long Term Support
 }
 
 variable "aks_enable_autoscale" {

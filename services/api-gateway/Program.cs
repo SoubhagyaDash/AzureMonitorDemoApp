@@ -4,6 +4,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Logs;
+using OpenTelemetry.Exporter;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,6 +63,7 @@ builder.Services.AddHttpClient("NotificationService", client =>
 // Configure OpenTelemetry
 var serviceName = "api-gateway";
 var serviceVersion = "1.0.0";
+var applicationId = builder.Configuration["APPLICATION_INSIGHTS_APPLICATION_ID"] ?? "e4580258-7369-47ea-a880-d85e204cfe5d";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
@@ -69,7 +71,8 @@ builder.Services.AddOpenTelemetry()
         .AddAttributes(new Dictionary<string, object>
         {
             ["deployment.environment"] = builder.Environment.EnvironmentName,
-            ["service.instance.id"] = Environment.MachineName
+            ["service.instance.id"] = Environment.MachineName,
+            ["microsoft.applicationId"] = applicationId
         }))
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation(options =>
@@ -87,28 +90,22 @@ builder.Services.AddOpenTelemetry()
         })
         .AddRedisInstrumentation()
         .AddSource(serviceName)
+        .AddSource("Azure.Messaging.EventHubs.*")
         .AddConsoleExporter()
         .AddOtlpExporter(options =>
         {
-            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
-        })
-        .AddAzureMonitorTraceExporter(options =>
-        {
-            options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
+            options.Protocol = OtlpExportProtocol.HttpProtobuf;
         }))
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddRuntimeInstrumentation()
         .AddMeter(serviceName)
         .AddConsoleExporter()
         .AddOtlpExporter(options =>
         {
-            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
-        })
-        .AddAzureMonitorMetricExporter(options =>
-        {
-            options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
+            options.Protocol = OtlpExportProtocol.HttpProtobuf;
         }));
 
 // Configure OpenTelemetry Logging
@@ -119,11 +116,8 @@ builder.Logging.AddOpenTelemetry(logging =>
     logging.AddConsoleExporter();
     logging.AddOtlpExporter(options =>
     {
-        options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317");
-    });
-    logging.AddAzureMonitorLogExporter(options =>
-    {
-        options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+        options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
+        options.Protocol = OtlpExportProtocol.HttpProtobuf;
     });
 });
 

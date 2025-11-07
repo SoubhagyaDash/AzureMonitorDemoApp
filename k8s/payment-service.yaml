@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: payment-service
-        image: __ACR_LOGIN_SERVER__/payment-service:latest
+        image: acroteldemodemo9rc3ue.azurecr.io/payment-service:latest
         ports:
         - containerPort: 3000
         env:

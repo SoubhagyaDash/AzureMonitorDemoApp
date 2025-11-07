@@ -5,7 +5,6 @@ metadata:
   namespace: otel-demo
 spec:
   destination:
-    applicationInsightsConnectionString: "InstrumentationKey=91a6b0e6-35a8-4162-b258-244b66701b67;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/;LiveEndpoint=https://westus2.livediagnostics.monitor.azure.com/;ApplicationId=59674a38-3ed7-4ff8-a5ae-734288ae97b9"
+    applicationInsightsConnectionString: "InstrumentationKey=728f8f23-0f17-4757-96b0-e67d5c0ea13d;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/;LiveEndpoint=https://westus2.livediagnostics.monitor.azure.com/;ApplicationId=e4580258-7369-47ea-a880-d85e204cfe5d"
   settings:
-    # Empty array means opt out of auto-instrumentation while still propagating shared configuration
     autoInstrumentationPlatforms: []

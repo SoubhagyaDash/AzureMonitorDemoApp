@@ -19,6 +19,7 @@ const environment = process.env.ENVIRONMENT || 'development';
 console.log(`Initializing OpenTelemetry for ${serviceName} v${serviceVersion} in ${environment} environment`);
 
 // Configure resource attributes
+const applicationId = process.env.APPLICATION_INSIGHTS_APPLICATION_ID || 'e4580258-7369-47ea-a880-d85e204cfe5d';
 const resource = new Resource({
   [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
   [SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion,
@@ -26,7 +27,8 @@ const resource = new Resource({
   [SemanticResourceAttributes.SERVICE_INSTANCE_ID]: process.env.HOSTNAME || require('os').hostname(),
   'service.language': 'nodejs',
   'service.runtime': 'nodejs',
-  'service.runtime.version': process.version
+  'service.runtime.version': process.version,
+  'microsoft.applicationId': applicationId
 });
 
 // Configure OTLP exporters
@@ -172,18 +174,18 @@ const sdk = new NodeSDK({
 });
 
 // Start the SDK
-sdk.start()
-  .then(() => {
-    console.log('✅ OpenTelemetry SDK initialized successfully');
-    console.log(`   Service: ${serviceName}`);
-    console.log(`   Version: ${serviceVersion}`);
-    console.log(`   Environment: ${environment}`);
-    console.log(`   OTLP Endpoint: ${otlpEndpoint}`);
-    console.log(`   Azure Monitor: ${azureConnectionString ? 'Enabled' : 'Disabled'}`);
-  })
-  .catch((error) => {
-    console.error('❌ Error initializing OpenTelemetry SDK:', error);
-  });
+// Start the SDK
+try {
+  sdk.start();
+  console.log('✅ OpenTelemetry SDK initialized successfully');
+  console.log(`   Service: ${serviceName}`);
+  console.log(`   Version: ${serviceVersion}`);
+  console.log(`   Environment: ${environment}`);
+  console.log(`   OTLP Endpoint: ${otlpEndpoint}`);
+  console.log(`   Azure Monitor: ${azureConnectionString ? 'Enabled' : 'Disabled'}`);
+} catch (error) {
+  console.error('❌ Error initializing OpenTelemetry SDK:', error);
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

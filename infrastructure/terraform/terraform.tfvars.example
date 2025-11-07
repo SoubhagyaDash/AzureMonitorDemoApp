@@ -8,7 +8,7 @@ project_name       = "my-otel-showcase"         # Your project name
 # AKS Configuration
 aks_node_count        = 3                       # Initial/fixed node count (used when autoscale disabled)
 aks_vm_size           = "Standard_D2s_v3"
-kubernetes_version    = "1.31.11"               # Stable with LTS (sequential upgrade from 1.29)
+kubernetes_version    = "1.33.3"                # Latest stable with AKS Long Term Support
 aks_enable_autoscale  = true                    # Enable cluster autoscaling
 aks_min_count         = 2                       # Minimum nodes when autoscaling
 aks_max_count         = 10                      # Maximum nodes when autoscaling
