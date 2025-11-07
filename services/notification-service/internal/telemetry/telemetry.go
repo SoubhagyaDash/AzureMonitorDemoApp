@@ -147,30 +147,34 @@ func InitTelemetry(cfg *config.Config) (func(context.Context) error, error) {
 func newResource(cfg *config.Config) (*resource.Resource, error) {
 	hostname, _ := os.Hostname()
 	
-	return resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			// Service attributes
-			semconv.ServiceName(cfg.ServiceName),
-			semconv.ServiceVersion("1.0.0"),
-			semconv.ServiceInstanceID(hostname),
-			
-			// Deployment attributes
-			semconv.DeploymentEnvironment(cfg.Environment),
-			attribute.String("deployment.platform", "kubernetes"),
-			attribute.String("deployment.cloud", "azure"),
-			
-			// Runtime attributes
-			attribute.String("telemetry.sdk.language", "go"),
-			attribute.String("telemetry.sdk.version", runtime.Version()),
-			
-			// Custom attributes
-			attribute.String("service.namespace", "otel-demo"),
-			attribute.String("service.component", "notification-service"),
-			attribute.String("service.description", "Real-time notification service with Event Hub and WebSocket"),
-		),
+	// First, get the default resource which includes OTEL_RESOURCE_ATTRIBUTES from environment
+	defaultRes := resource.Default()
+	
+	// Then create our service-specific attributes
+	serviceRes := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		// Service attributes - these should override any from environment
+		semconv.ServiceName(cfg.ServiceName),
+		semconv.ServiceVersion("1.0.0"),
+		semconv.ServiceInstanceID(hostname),
+		
+		// Deployment attributes
+		semconv.DeploymentEnvironment(cfg.Environment),
+		attribute.String("deployment.platform", "kubernetes"),
+		attribute.String("deployment.cloud", "azure"),
+		
+		// Runtime attributes
+		attribute.String("telemetry.sdk.language", "go"),
+		attribute.String("telemetry.sdk.version", runtime.Version()),
+		
+		// Custom attributes
+		attribute.String("service.namespace", "otel-demo"),
+		attribute.String("service.component", "notification-service"),
+		attribute.String("service.description", "Real-time notification service with Event Hub and WebSocket"),
 	)
+	
+	// Merge with service attributes taking precedence (listed second)
+	return resource.Merge(defaultRes, serviceRes)
 }
 
 // newTraceProvider creates a trace provider with OTLP HTTP exporter
@@ -183,21 +187,11 @@ func newTraceProvider(ctx context.Context, cfg *config.Config, res *resource.Res
 		), nil
 	}
 
-	// Parse endpoint to extract host:port and path
-	// Azure Monitor injects complete URL like "http://10.0.2.91:28331/v1/traces"
-	// But Go OTLP HTTP exporter WithEndpoint() expects just "host:port" and WithURLPath() for path
-	parsedURL, err := url.Parse(cfg.OTLPTracesEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse traces endpoint: %w", err)
-	}
-
 	// Create OTLP HTTP trace exporter
+	// Use minimal configuration for Azure Monitor compatibility
 	traceExporter, err := otlptracehttp.New(
 		ctx,
-		otlptracehttp.WithEndpoint(parsedURL.Host), // Just host:port
-		otlptracehttp.WithURLPath(parsedURL.Path),  // Explicit path
-		otlptracehttp.WithInsecure(),               // Use insecure for internal cluster communication
-		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
+		otlptracehttp.WithEndpointURL(cfg.OTLPTracesEndpoint), // Use full URL directly
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
@@ -227,21 +221,11 @@ func newMeterProvider(ctx context.Context, cfg *config.Config, res *resource.Res
 		), nil
 	}
 
-	// Parse endpoint to extract host:port and path
-	// Azure Monitor injects complete URL like "http://10.0.2.62:28333/v1/metrics"
-	// But Go OTLP HTTP exporter WithEndpoint() expects just "host:port" and WithURLPath() for path
-	parsedURL, err := url.Parse(cfg.OTLPMetricsEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse metrics endpoint: %w", err)
-	}
-
 	// Create OTLP HTTP metric exporter
+	// Use minimal configuration for Azure Monitor compatibility
 	metricExporter, err := otlpmetrichttp.New(
 		ctx,
-		otlpmetrichttp.WithEndpoint(parsedURL.Host),  // Just host:port
-		otlpmetrichttp.WithURLPath(parsedURL.Path),   // Explicit path
-		otlpmetrichttp.WithInsecure(),
-		otlpmetrichttp.WithCompression(otlpmetrichttp.GzipCompression),
+		otlpmetrichttp.WithEndpointURL(cfg.OTLPMetricsEndpoint), // Use full URL directly
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metric exporter: %w", err)

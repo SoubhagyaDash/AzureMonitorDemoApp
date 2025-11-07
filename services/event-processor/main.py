@@ -22,15 +22,19 @@ from redis.asyncio import Redis
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+# Enable Azure SDK distributed tracing
+from azure.core.settings import settings
+from azure.core.tracing.ext.opentelemetry_span import OpenTelemetrySpan
+
 # OpenTelemetry imports
 from opentelemetry import trace, metrics, baggage
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -39,6 +43,10 @@ from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.semconv.trace import SpanAttributes
 from opentelemetry.trace import Status, StatusCode
+
+# Import W3C TraceContext propagator for distributed tracing
+from opentelemetry.propagate import extract, inject
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 # Configure OpenTelemetry
 def setup_telemetry():
@@ -64,8 +72,7 @@ def setup_telemetry():
     # Add OTLP span exporter if endpoint is configured
     if otlp_traces_endpoint:
         otlp_exporter = OTLPSpanExporter(
-            endpoint=otlp_traces_endpoint,
-            insecure=True
+            endpoint=otlp_traces_endpoint
         )
         span_processor = BatchSpanProcessor(otlp_exporter)
         trace_provider.add_span_processor(span_processor)
@@ -76,8 +83,7 @@ def setup_telemetry():
     if otlp_metrics_endpoint:
         metric_reader = PeriodicExportingMetricReader(
             OTLPMetricExporter(
-                endpoint=otlp_metrics_endpoint,
-                insecure=True
+                endpoint=otlp_metrics_endpoint
             ),
             export_interval_millis=30000
         )
@@ -94,8 +100,7 @@ def setup_telemetry():
         logger_provider.add_log_record_processor(
             BatchLogRecordProcessor(
                 OTLPLogExporter(
-                    endpoint=otlp_logs_endpoint,
-                    insecure=True
+                    endpoint=otlp_logs_endpoint
                 )
             )
         )
@@ -108,6 +113,9 @@ def setup_telemetry():
     # AzureEventHubInstrumentor().instrument()  # Not available in this version
     RequestsInstrumentor().instrument()
     RedisInstrumentor().instrument()
+    
+    # Configure Azure SDK to use OpenTelemetry for distributed tracing
+    settings.tracing_implementation = OpenTelemetrySpan
 
 # Setup telemetry
 setup_telemetry()
@@ -270,67 +278,91 @@ class EventProcessor:
         """Process a single event with tracing and metrics"""
         start_time = time.time()
         
-        with tracer.start_as_current_span("process_single_event") as span:
-            try:
-                # Extract event data
-                event_body = json.loads(event.body_as_str())
-                event_type = event.properties.get("EventType", "Unknown")
-                source = event.properties.get("Source", "Unknown")
-                
-                # Set span attributes
-                span.set_attribute("event.type", event_type)
-                span.set_attribute("event.source", source)
-                span.set_attribute("partition.id", partition_context.partition_id)
-                
-                # Add baggage for distributed context
-                baggage.set_baggage("event.type", event_type)
-                baggage.set_baggage("event.source", source)
-                
-                logger.info("Processing event", 
-                           event_type=event_type, 
-                           source=source,
-                           partition=partition_context.partition_id)
-                
-                # Inject failures for demo purposes
-                await self.maybe_inject_failure("process_event")
-                
-                # Process based on event type
-                if event_type == "OrderCreated":
-                    await self.handle_order_created(event_body, span)
-                elif event_type == "OrderStatusUpdated":
-                    await self.handle_order_status_updated(event_body, span)
-                else:
-                    await self.handle_generic_event(event_body, span)
-                
-                # Store in Cosmos DB
-                if self.cosmos_container:
-                    await self.store_processed_event(event_body, event_type, span)
-                
-                # Cache recent events in Redis
-                if self.redis_client:
-                    await self.cache_event_summary(event_body, event_type)
-                
-                # Record metrics
-                processing_time = time.time() - start_time
-                processing_duration_histogram.record(processing_time)
-                events_processed_counter.add(1, {"event_type": event_type, "source": source})
-                
-                span.set_attribute("processing.duration_ms", processing_time * 1000)
-                span.set_status(Status(StatusCode.OK))
-                
-                logger.info("Event processed successfully", 
-                           event_type=event_type,
-                           processing_time_ms=processing_time * 1000)
-                
-            except Exception as e:
-                processing_time = time.time() - start_time
-                span.record_exception(e)
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                errors_counter.add(1, {"error_type": "processing_error"})
-                
-                logger.error("Event processing failed", 
-                           error=str(e),
-                           processing_time_ms=processing_time * 1000)
+        # Extract distributed tracing context from EventHub message properties
+        # EventHub propagates traceparent/tracestate via Diagnostic-Id and other properties
+        propagator = TraceContextTextMapPropagator()
+        carrier = {}
+        
+        # Map EventHub properties to W3C trace context format
+        if event.properties:
+            # Check for Diagnostic-Id (used by Azure SDKs)
+            if "Diagnostic-Id" in event.properties:
+                carrier["traceparent"] = event.properties["Diagnostic-Id"]
+            # Also check for direct traceparent
+            if "traceparent" in event.properties:
+                carrier["traceparent"] = event.properties["traceparent"]
+            if "tracestate" in event.properties:
+                carrier["tracestate"] = event.properties["tracestate"]
+        
+        # Extract context and start span as child of upstream context
+        ctx = propagator.extract(carrier=carrier)
+        
+        with tracer.start_as_current_span("eventhub.receive", context=ctx) as receive_span:
+            receive_span.set_attribute("messaging.system", "eventhub")
+            receive_span.set_attribute("messaging.destination", config.EVENT_HUB_NAME)
+            receive_span.set_attribute("messaging.operation", "receive")
+            
+            with tracer.start_as_current_span("process_single_event") as span:
+                try:
+                    # Extract event data
+                    event_body = json.loads(event.body_as_str())
+                    event_type = event.properties.get("EventType", "Unknown")
+                    source = event.properties.get("Source", "Unknown")
+                    
+                    # Set span attributes
+                    span.set_attribute("event.type", event_type)
+                    span.set_attribute("event.source", source)
+                    span.set_attribute("partition.id", partition_context.partition_id)
+                    
+                    # Add baggage for distributed context
+                    baggage.set_baggage("event.type", event_type)
+                    baggage.set_baggage("event.source", source)
+                    
+                    logger.info("Processing event", 
+                               event_type=event_type, 
+                               source=source,
+                               partition=partition_context.partition_id)
+                    
+                    # Inject failures for demo purposes
+                    await self.maybe_inject_failure("process_event")
+                    
+                    # Process based on event type
+                    if event_type == "OrderCreated":
+                        await self.handle_order_created(event_body, span)
+                    elif event_type == "OrderStatusUpdated":
+                        await self.handle_order_status_updated(event_body, span)
+                    else:
+                        await self.handle_generic_event(event_body, span)
+                    
+                    # Store in Cosmos DB
+                    if self.cosmos_container:
+                        await self.store_processed_event(event_body, event_type, span)
+                    
+                    # Cache recent events in Redis
+                    if self.redis_client:
+                        await self.cache_event_summary(event_body, event_type)
+                    
+                    # Record metrics
+                    processing_time = time.time() - start_time
+                    processing_duration_histogram.record(processing_time)
+                    events_processed_counter.add(1, {"event_type": event_type, "source": source})
+                    
+                    span.set_attribute("processing.duration_ms", processing_time * 1000)
+                    span.set_status(Status(StatusCode.OK))
+                    
+                    logger.info("Event processed successfully", 
+                               event_type=event_type,
+                               processing_time_ms=processing_time * 1000)
+                    
+                except Exception as e:
+                    processing_time = time.time() - start_time
+                    span.record_exception(e)
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    errors_counter.add(1, {"error_type": "processing_error"})
+                    
+                    logger.error("Event processing failed", 
+                               error=str(e),
+                               processing_time_ms=processing_time * 1000)
 
     async def handle_order_created(self, event_data: Dict[str, Any], span):
         """Handle OrderCreated events"""

@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"log"
 	"notification-service/internal/config"
+	"notification-service/internal/telemetry"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs"
 	"github.com/go-redis/redis/v8"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type NotificationService struct {
@@ -73,7 +79,9 @@ func (e *EventHubService) StartProcessing(ctx context.Context, handler func([]by
 	// Log connection details (sanitized)
 	log.Printf("Initializing Event Hub consumer with consumer group: %s", e.consumerGroup)
 	
-	// Create consumer client
+	// Create consumer client with tracing enabled
+	// The Azure SDK for Go automatically uses the global OpenTelemetry tracer provider
+	// No explicit configuration needed - it will pick up the global otel.SetTracerProvider
 	// If connection string contains EntityPath, use empty string for eventHubName
 	consumerClient, err := azeventhubs.NewConsumerClientFromConnectionString(
 		e.connectionString,
@@ -168,11 +176,47 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 
 				log.Printf("Received event from partition %s: %d bytes", partitionID, len(event.Body))
 
+				// Extract distributed tracing context from EventHub message properties
+				propagator := otel.GetTextMapPropagator()
+				carrier := propagation.MapCarrier{}
+				
+				// Map EventHub properties to W3C trace context format
+				if event.Properties != nil {
+					for key, value := range event.Properties {
+						if strValue, ok := value.(string); ok {
+							// Check for Diagnostic-Id (used by Azure SDKs) or traceparent
+							if key == "Diagnostic-Id" || key == "traceparent" {
+								carrier["traceparent"] = strValue
+							} else if key == "tracestate" {
+								carrier["tracestate"] = strValue
+							}
+						}
+					}
+				}
+				
+				// Extract context and create span as child of upstream context
+				eventCtx := propagator.Extract(ctx, carrier)
+				_, span := telemetry.Tracer.Start(eventCtx, "eventhub.receive",
+					trace.WithSpanKind(trace.SpanKindConsumer),
+					trace.WithAttributes(
+						attribute.String("messaging.system", "eventhub"),
+						attribute.String("messaging.destination", "notification-events"),
+						attribute.String("messaging.operation", "receive"),
+						attribute.String("partition.id", partitionID),
+					),
+				)
+
 				// Call the handler
 				if err := handler(event.Body); err != nil {
 					log.Printf("ERROR: Handler failed for event from partition %s: %v", partitionID, err)
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
 					// Continue processing other events even if one fails
+				} else {
+					span.SetStatus(codes.Ok, "Event processed successfully")
 				}
+				
+				span.End()
 			}
 		}
 	}

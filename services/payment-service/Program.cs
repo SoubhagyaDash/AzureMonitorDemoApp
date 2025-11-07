@@ -58,7 +58,8 @@ builder.Services.AddOpenTelemetry()
                     activity.SetTag("db.command_text", command.CommandText);
                 };
             })
-            .AddSource(serviceName);
+            .AddSource(serviceName)
+            .AddSource("Azure.Messaging.EventHubs.*");
 
         // Use OTLP exporter if traces endpoint is configured
         if (!string.IsNullOrEmpty(otlpTracesEndpoint))
