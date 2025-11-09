@@ -248,12 +248,21 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-// Serve static files from current directory
-app.use(express.static(__dirname));
+// Determine static files location
+// In production (App Service), build files are in root
+// In development, build files are in build/ subdirectory
+const buildPath = path.join(__dirname, 'build');
+const staticPath = require('fs').existsSync(buildPath) ? buildPath : __dirname;
+const indexPath = require('fs').existsSync(path.join(buildPath, 'index.html')) 
+  ? path.join(buildPath, 'index.html')
+  : path.join(__dirname, 'index.html');
 
-// Serve index.html for root
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+// Serve static files
+app.use(express.static(staticPath));
+
+// Serve index.html for all other routes (SPA support)
+app.get('*', (req, res) => {
+  res.sendFile(indexPath);
 });
 
 app.listen(PORT, () => {

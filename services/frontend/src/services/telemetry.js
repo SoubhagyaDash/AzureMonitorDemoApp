@@ -58,6 +58,7 @@ const fetchConfigAndInitialize = async () => {
     const buildTimeConnectionString = process.env.REACT_APP_APPLICATIONINSIGHTS_CONNECTION_STRING;
     
     if (buildTimeConnectionString) {
+      console.log('Using build-time App Insights connection string');
       initializeAppInsights(buildTimeConnectionString);
       return;
     }
@@ -67,6 +68,7 @@ const fetchConfigAndInitialize = async () => {
     if (response.ok) {
       const config = await response.json();
       if (config.applicationInsights?.connectionString) {
+        console.log('Using runtime App Insights connection string from server');
         initializeAppInsights(config.applicationInsights.connectionString);
       } else {
         console.warn('Application Insights connection string not found in server config');
@@ -75,12 +77,23 @@ const fetchConfigAndInitialize = async () => {
       console.warn('Failed to fetch runtime configuration from server');
     }
   } catch (error) {
-    console.error('Error fetching App Insights configuration:', error);
+    console.warn('Error fetching App Insights configuration:', error);
+    // Don't re-throw - allow app to continue without telemetry
   }
 };
 
-// Start initialization immediately
-fetchConfigAndInitialize();
+// Start initialization asynchronously - don't block app startup
+if (typeof window !== 'undefined') {
+  // Wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchConfigAndInitialize();
+    });
+  } else {
+    // DOM is already ready
+    fetchConfigAndInitialize();
+  }
+}
 
 // Custom telemetry helper functions
 export const telemetry = {
