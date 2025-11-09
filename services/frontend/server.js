@@ -239,6 +239,15 @@ app.post('/api/payments', async (req, res) => {
   }
 });
 
+// Serve runtime configuration for the React app
+app.get('/api/config', (req, res) => {
+  res.json({
+    applicationInsights: {
+      connectionString: process.env.APPLICATIONINSIGHTS_CONNECTION_STRING || ''
+    }
+  });
+});
+
 // Serve static files from current directory
 app.use(express.static(__dirname));
 
