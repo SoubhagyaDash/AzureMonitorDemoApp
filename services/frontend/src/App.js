@@ -14,8 +14,6 @@ import {
 import {
   Dashboard as DashboardIcon,
   Traffic as TrafficIcon,
-  Settings as SettingsIcon,
-  Timeline as TimelineIcon,
   BugReport as BugReportIcon,
   ShoppingCart as ShoppingCartIcon
 } from '@mui/icons-material';
@@ -26,9 +24,7 @@ import { reactPlugin, telemetry } from './services/telemetry';
 // Import components
 import Dashboard from './components/Dashboard';
 import TrafficGenerator from './components/TrafficGenerator';
-import ServiceHealth from './components/ServiceHealth';
 import FailureInjectionControl from './components/FailureInjectionControl';
-import Metrics from './components/Metrics';
 import ECommerceStore from './components/ECommerceStore';
 
 // Set up Application Insights React plugin with router history
@@ -51,9 +47,7 @@ function App() {
     { label: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { label: 'eCommerce Store', icon: <ShoppingCartIcon />, path: '/store' },
     { label: 'Traffic Generator', icon: <TrafficIcon />, path: '/traffic' },
-    { label: 'Service Health', icon: <TimelineIcon />, path: '/health' },
-    { label: 'Failure Injection', icon: <BugReportIcon />, path: '/failures' },
-    { label: 'Metrics', icon: <SettingsIcon />, path: '/metrics' }
+    { label: 'Failure Injection', icon: <BugReportIcon />, path: '/failures' }
   ];
 
   useEffect(() => {
@@ -147,16 +141,8 @@ function App() {
             element={<TrafficGenerator onNotification={showNotification} />} 
           />
           <Route 
-            path="/health" 
-            element={<ServiceHealth onNotification={showNotification} />} 
-          />
-          <Route 
             path="/failures" 
             element={<FailureInjectionControl onNotification={showNotification} />} 
-          />
-          <Route 
-            path="/metrics" 
-            element={<Metrics onNotification={showNotification} />} 
           />
         </Routes>
       </Container>

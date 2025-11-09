@@ -11,66 +11,64 @@ import {
   ListItem,
   ListItemText,
   Divider,
-  Alert
+  Alert,
+  IconButton
 } from '@mui/material';
 import {
-  CheckCircle as CheckCircleIcon,
+  CheckCircle as HealthyIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
-  Computer as ComputerIcon,
-  Cloud as CloudIcon,
-  Storage as StorageIcon
+  Info as InfoIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
-import { Line } from 'react-chartjs-2';
-import { format } from 'date-fns';
 import api from '../services/api';
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 const Dashboard = ({ onNotification }) => {
   const [services, setServices] = useState([]);
-  const [metrics, setMetrics] = useState({});
   const [recentOrders, setRecentOrders] = useState([]);
-  const [systemHealth, setSystemHealth] = useState({});
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
 
   useEffect(() => {
     fetchDashboardData();
-    const interval = setInterval(fetchDashboardData, 5000); // Refresh every 5 seconds
+    const interval = setInterval(fetchDashboardData, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
   }, []);
 
   const fetchDashboardData = async () => {
     try {
-      const [servicesData, ordersData, healthData] = await Promise.all([
+      const [servicesData, ordersData] = await Promise.all([
         api.getServiceStatus(),
-        api.getRecentOrders(),
-        api.getSystemHealth()
+        api.getRecentOrders().catch(() => [])
       ]);
       
-      setServices(servicesData);
-      setRecentOrders(ordersData);
-      setSystemHealth(healthData);
+      setServices(servicesData || []);
+      setRecentOrders(ordersData || []);
+      setLastUpdated(new Date());
       setLoading(false);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      onNotification('Failed to fetch dashboard data', 'error');
+      onNotification?.('Failed to fetch dashboard data', 'error');
       setLoading(false);
     }
+  };
+
+  const handleRefresh = () => {
+    setLoading(true);
+    fetchDashboardData();
   };
 
   const getStatusIcon = (status) => {
     switch (status?.toLowerCase()) {
       case 'healthy':
-        return <CheckCircleIcon sx={{ color: '#4caf50' }} />;
+        return <HealthyIcon sx={{ color: '#4caf50' }} />;
       case 'warning':
+      case 'unhealthy':
         return <WarningIcon sx={{ color: '#ff9800' }} />;
       case 'error':
-      case 'unhealthy':
         return <ErrorIcon sx={{ color: '#f44336' }} />;
       default:
-        return <WarningIcon sx={{ color: '#9e9e9e' }} />;
+        return <InfoIcon sx={{ color: '#9e9e9e' }} />;
     }
   };
 
@@ -79,56 +77,43 @@ const Dashboard = ({ onNotification }) => {
       case 'healthy':
         return 'success';
       case 'warning':
+      case 'unhealthy':
         return 'warning';
       case 'error':
-      case 'unhealthy':
         return 'error';
       default:
         return 'default';
     }
   };
 
-  // Sample data for metrics chart
-  const chartData = {
-    labels: Array.from({ length: 20 }, (_, i) => format(new Date(Date.now() - (19 - i) * 60000), 'HH:mm')),
-    datasets: [
-      {
-        label: 'Requests/min',
-        data: Array.from({ length: 20 }, () => Math.floor(Math.random() * 100) + 50),
-        borderColor: '#0078d4',
-        backgroundColor: 'rgba(0, 120, 212, 0.1)',
-        tension: 0.4,
-      },
-      {
-        label: 'Errors/min',
-        data: Array.from({ length: 20 }, () => Math.floor(Math.random() * 10)),
-        borderColor: '#d13438',
-        backgroundColor: 'rgba(209, 52, 56, 0.1)',
-        tension: 0.4,
-      }
-    ]
+  const getTechnologyBadge = (serviceName) => {
+    if (serviceName.includes('Gateway')) return { label: '.NET', color: '#512BD4' };
+    if (serviceName.includes('Order')) return { label: 'Java', color: '#ED8B00' };
+    if (serviceName.includes('Payment')) return { label: '.NET', color: '#512BD4' };
+    if (serviceName.includes('Event')) return { label: 'Python', color: '#3776AB' };
+    if (serviceName.includes('Notification')) return { label: 'Go', color: '#00ADD8' };
+    if (serviceName.includes('Inventory')) return { label: 'Node.js', color: '#339933' };
+    return { label: 'Service', color: '#666' };
   };
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top',
-      },
-      title: {
-        display: true,
-        text: 'System Metrics Overview'
-      }
-    },
-    scales: {
-      y: {
-        beginAtZero: true
-      }
+  const getDeploymentTarget = (serviceName) => {
+    if (serviceName.includes('Gateway') || serviceName.includes('Inventory')) {
+      return { label: 'VM', icon: '🖥️', color: '#0078D4' };
     }
+    return { label: 'AKS', icon: '☸️', color: '#326CE5' };
   };
 
-  if (loading) {
+  const getInstrumentationType = (serviceName) => {
+    if (serviceName.includes('Order')) {
+      return { label: 'Auto-instrumentation', short: 'Auto', color: '#107C10' };
+    }
+    return { label: 'OSS OTel SDK', short: 'OTel', color: '#0078D4' };
+  };
+
+  const overallHealth = services.length > 0 ? 
+    (services.filter(s => s.status === 'healthy').length / services.length * 100).toFixed(0) : 0;
+
+  if (loading && services.length === 0) {
     return (
       <Box sx={{ mt: 4 }}>
         <LinearProgress />
@@ -141,111 +126,164 @@ const Dashboard = ({ onNotification }) => {
 
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>
-        System Dashboard
-      </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4">
+          System Dashboard
+        </Typography>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="body2" color="textSecondary">
+            Last updated: {lastUpdated.toLocaleTimeString()}
+          </Typography>
+          <IconButton onClick={handleRefresh} disabled={loading} size="small">
+            <RefreshIcon />
+          </IconButton>
+        </Box>
+      </Box>
 
       <Alert severity="info" sx={{ mb: 3 }}>
         This dashboard showcases Azure Monitor OpenTelemetry integration across multiple languages and deployment targets.
         Use the Traffic Generator to create synthetic load and observe distributed tracing in action.
       </Alert>
 
+      {/* Overall Health Summary */}
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" color="textSecondary">
+                Overall Health
+              </Typography>
+              <Typography variant="h3" sx={{ mt: 1 }}>
+                {overallHealth}%
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                {services.filter(s => s.status === 'healthy').length} of {services.length} services healthy
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" color="textSecondary">
+                Total Services
+              </Typography>
+              <Typography variant="h3" sx={{ mt: 1 }}>
+                {services.length}
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                Active monitoring endpoints
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" color="textSecondary">
+                Recent Orders
+              </Typography>
+              <Typography variant="h3" sx={{ mt: 1 }}>
+                {recentOrders.length}
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                In the last 5 minutes
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
       <Grid container spacing={3}>
         {/* Service Status Cards */}
         <Grid item xs={12}>
-          <Typography variant="h5" sx={{ mb: 2 }}>
-            Service Health
-          </Typography>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h5">
+              Service Health
+            </Typography>
+            {loading && <LinearProgress sx={{ width: '100px' }} />}
+          </Box>
         </Grid>
 
-        <Grid item xs={12} md={6} lg={3}>
-          <Card className="metric-card">
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <ComputerIcon sx={{ mr: 1, color: '#0078d4' }} />
-                <Typography variant="h6">API Gateway (.NET)</Typography>
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                {getStatusIcon('healthy')}
-                <Chip label="VM Deployed" size="small" variant="outlined" />
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Azure Monitor OTel Distro
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={6} lg={3}>
-          <Card className="metric-card">
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <CloudIcon sx={{ mr: 1, color: '#107c10' }} />
-                <Typography variant="h6">Order Service (Java)</Typography>
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                {getStatusIcon('healthy')}
-                <Chip label="AKS Deployed" size="small" variant="outlined" />
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Auto-instrumentation
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={6} lg={3}>
-          <Card className="metric-card">
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <StorageIcon sx={{ mr: 1, color: '#ff6f00' }} />
-                <Typography variant="h6">Event Processor (Python)</Typography>
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                {getStatusIcon('healthy')}
-                <Chip label="AKS Deployed" size="small" variant="outlined" />
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                OSS OTel SDK
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={6} lg={3}>
-          <Card className="metric-card">
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <StorageIcon sx={{ mr: 1, color: '#8bc34a' }} />
-                <Typography variant="h6">Inventory Service (Node.js)</Typography>
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                {getStatusIcon('healthy')}
-                <Chip label="AKS Deployed" size="small" variant="outlined" />
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                OSS OTel SDK
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Metrics Chart */}
-        <Grid item xs={12} lg={8}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                System Metrics
-              </Typography>
-              <Box sx={{ height: 300 }}>
-                <Line data={chartData} options={chartOptions} />
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+        {services.map((service, index) => {
+          const tech = getTechnologyBadge(service.name);
+          const deployment = getDeploymentTarget(service.name);
+          const instrumentation = getInstrumentationType(service.name);
+          
+          return (
+            <Grid item xs={12} sm={6} md={4} key={index}>
+              <Card sx={{ 
+                borderLeft: `4px solid ${tech.color}`,
+                height: '100%'
+              }}>
+                <CardContent>
+                  <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
+                    <Typography variant="h6" sx={{ flexGrow: 1 }}>
+                      {service.name}
+                    </Typography>
+                    {getStatusIcon(service.status)}
+                  </Box>
+                  
+                  <Box display="flex" gap={1} mb={2} flexWrap="wrap">
+                    <Chip 
+                      label={tech.label} 
+                      size="small" 
+                      sx={{ 
+                        backgroundColor: tech.color, 
+                        color: 'white',
+                        fontWeight: 'bold'
+                      }} 
+                    />
+                    <Chip 
+                      label={service.status || 'Unknown'} 
+                      size="small" 
+                      color={getStatusColor(service.status)}
+                    />
+                  </Box>
+                  
+                  <Box display="flex" gap={1} mb={1} flexWrap="wrap">
+                    <Chip 
+                      label={`${deployment.icon} ${deployment.label}`}
+                      size="small" 
+                      variant="outlined"
+                      sx={{ 
+                        borderColor: deployment.color,
+                        color: deployment.color,
+                        fontWeight: 500
+                      }} 
+                    />
+                    <Chip 
+                      label={instrumentation.short}
+                      title={instrumentation.label}
+                      size="small" 
+                      variant="outlined"
+                      sx={{ 
+                        borderColor: instrumentation.color,
+                        color: instrumentation.color,
+                        fontWeight: 500
+                      }} 
+                    />
+                  </Box>
+                  
+                  {service.responseTime && (
+                    <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                      Response time: {service.responseTime}
+                    </Typography>
+                  )}
+                  
+                  {service.data?.message && (
+                    <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                      {service.data.message}
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>
+          );
+        })}
 
         {/* Recent Orders */}
-        <Grid item xs={12} lg={4}>
+        <Grid item xs={12} lg={6}>
           <Card>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2 }}>
@@ -286,52 +324,6 @@ const Dashboard = ({ onNotification }) => {
                   </ListItem>
                 )}
               </List>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* System Information */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                OpenTelemetry Configuration
-              </Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" color="primary">
-                    Azure Monitor Distro Services
-                  </Typography>
-                  <Typography variant="body2">
-                    • API Gateway (.NET) - Running on Azure VMs
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" color="primary">
-                    OSS OpenTelemetry Services
-                  </Typography>
-                  <Typography variant="body2">
-                    • Event Processor (Python) - OTLP Export<br />
-                    • Inventory Service (Node.js) - OTLP Export
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" color="primary">
-                    Auto-instrumented Services
-                  </Typography>
-                  <Typography variant="body2">
-                    • Order Service (Java) - AKS Auto-instrumentation
-                  </Typography>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle2" color="primary">
-                    Azure Resources
-                  </Typography>
-                  <Typography variant="body2">
-                    • Event Hub, SQL Database, Cosmos DB, Redis Cache
-                  </Typography>
-                </Grid>
-              </Grid>
             </CardContent>
           </Card>
         </Grid>
