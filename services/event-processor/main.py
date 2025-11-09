@@ -56,6 +56,7 @@ def setup_telemetry():
     otlp_traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
     otlp_metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
     otlp_logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+    application_id = os.getenv("APPLICATION_INSIGHTS_APPLICATION_ID", "unknown")
     
     # Configure resource attributes
     resource = Resource.create({
@@ -63,7 +64,8 @@ def setup_telemetry():
         "service.version": "1.0.0",
         "deployment.environment": os.getenv("ENVIRONMENT", "production"),
         "deployment.platform": "kubernetes",
-        "deployment.cloud": "azure"
+        "deployment.cloud": "azure",
+        "microsoft.applicationId": application_id
     })
     
     # Configure tracing

@@ -19,10 +19,11 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: acroteldemodemo9rc3ue.azurecr.io/order-service:latest
+        image: __ACR_LOGIN_SERVER__/order-service:latest
         ports:
         - containerPort: 8080
         env:
+        # Order Service uses Java auto-instrumentation (Instrumentation CR) which also needs connection string
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:

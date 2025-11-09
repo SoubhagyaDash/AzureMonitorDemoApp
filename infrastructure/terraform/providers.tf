@@ -29,4 +29,9 @@ resource "random_string" "suffix" {
   length  = 6
   special = false
   upper   = false
+
+  keepers = {
+    # Change this value to force regeneration of the suffix
+    regenerate = "2025-11-08-v2"
+  }
 }

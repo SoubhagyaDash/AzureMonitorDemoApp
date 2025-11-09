@@ -94,8 +94,8 @@ builder.Services.AddOpenTelemetry()
         .AddConsoleExporter()
         .AddOtlpExporter(options =>
         {
-            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
-            options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] ?? "http://localhost:4319");
+            options.Protocol = OtlpExportProtocol.Grpc;
         }))
     .WithMetrics(metrics => metrics
         .AddAspNetCoreInstrumentation()
@@ -104,8 +104,8 @@ builder.Services.AddOpenTelemetry()
         .AddConsoleExporter()
         .AddOtlpExporter(options =>
         {
-            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
-            options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] ?? "http://localhost:4317");
+            options.Protocol = OtlpExportProtocol.Grpc;
         }));
 
 // Configure OpenTelemetry Logging
@@ -116,8 +116,8 @@ builder.Logging.AddOpenTelemetry(logging =>
     logging.AddConsoleExporter();
     logging.AddOtlpExporter(options =>
     {
-        options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318");
-        options.Protocol = OtlpExportProtocol.HttpProtobuf;
+        options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] ?? "http://localhost:4319");
+        options.Protocol = OtlpExportProtocol.Grpc;
     });
 });
 

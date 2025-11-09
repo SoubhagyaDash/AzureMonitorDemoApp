@@ -19,15 +19,15 @@ spec:
     spec:
       containers:
       - name: event-processor
-        image: acroteldemodemo9rc3ue.azurecr.io/event-processor:latest
+        image: __ACR_LOGIN_SERVER__/event-processor:latest
         ports:
         - containerPort: 8000
         env:
-        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+        - name: APPLICATION_INSIGHTS_APPLICATION_ID
           valueFrom:
             secretKeyRef:
               name: otel-demo-shared
-              key: application-insights-connection-string
+              key: application-insights-application-id
         - name: EVENT_HUB_CONNECTION_STRING
           valueFrom:
             secretKeyRef:

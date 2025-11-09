@@ -20,6 +20,7 @@ param(
     [string]$VarFile,
     [string]$DockerTag = "latest",
     [string]$AppInsightsConnectionString,
+    [string]$AksAppInsightsConnectionString,
     [switch]$SkipInfrastructure,
     [switch]$SkipContainers,
     [switch]$SkipAKS,
@@ -176,17 +177,31 @@ $acrName = $terraformOutput.acr_name.value
 $acrLoginServer = $terraformOutput.acr_login_server.value
 $acrAdminUsername = $terraformOutput.acr_admin_username.value
 $acrAdminPassword = $terraformOutput.acr_admin_password.value
-$appInsightsConnectionString = if ($AppInsightsConnectionString) { $AppInsightsConnectionString } else { $terraformOutput.application_insights_connection_string.value }
 
-# Extract Application ID from connection string (from ApplicationId parameter at the end)
-# Format: InstrumentationKey=xxx;IngestionEndpoint=...;LiveEndpoint=...;ApplicationId=e4580258-7369-47ea-a880-d85e204cfe5d
-$appInsightsApplicationId = if ($appInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
+# Frontend: Full connection string for Browser SDK
+$frontendAppInsightsConnectionString = if ($AppInsightsConnectionString) { $AppInsightsConnectionString } else { $terraformOutput.application_insights_connection_string.value }
+
+# VM Services: Extract Application ID for microsoft.applicationId resource attribute (telemetry goes through OTLP->AMA->DCR)
+$vmAppInsightsApplicationId = if ($frontendAppInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
     $matches[1]
 } else {
-    Write-Warning "Could not extract Application ID from connection string. Falling back to Terraform output."
+    Write-Warning "Could not extract VM Application ID from connection string. Falling back to Terraform output."
     $terraformOutput.application_insights_application_id.value
 }
-Write-Host "Using Application Insights Application ID: $appInsightsApplicationId" -ForegroundColor Green
+
+# AKS Services: Full connection string for Instrumentation CR (Java auto-instrumentation), and extract Application ID for other services
+$aksAppInsightsConnectionString = if ($AksAppInsightsConnectionString) { $AksAppInsightsConnectionString } else { $frontendAppInsightsConnectionString }
+$aksAppInsightsApplicationId = if ($aksAppInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
+    $matches[1]
+} else {
+    Write-Warning "Could not extract AKS Application ID from connection string. Using VM Application ID."
+    $vmAppInsightsApplicationId
+}
+
+Write-Host "Frontend App Insights (full connection string): $($frontendAppInsightsConnectionString.Substring(0, 50))..." -ForegroundColor Green
+Write-Host "VM Services Application ID (for resource attribute): $vmAppInsightsApplicationId" -ForegroundColor Green
+Write-Host "AKS Instrumentation CR (full connection string): $($aksAppInsightsConnectionString.Substring(0, 50))..." -ForegroundColor Green
+Write-Host "AKS Services Application ID (for resource attribute): $aksAppInsightsApplicationId" -ForegroundColor Green
 
 $connectionStrings = $terraformOutput.connection_strings.value
 $serviceEndpoints = $terraformOutput.service_endpoints.value
@@ -341,12 +356,12 @@ if (-not $SkipAKS) {
     kubectl create namespace otel-demo --dry-run=client -o yaml | kubectl apply -f -
     
     # Apply Instrumentation Custom Resource for Azure Monitor app monitoring
-    Write-Host "  → Applying Azure Monitor Instrumentation CR" -ForegroundColor Yellow
+    Write-Host "  → Applying Azure Monitor Instrumentation CR for Order Service (Java auto-instrumentation)" -ForegroundColor Yellow
     $instrumentationManifest = Join-Path $repoRoot "k8s/instrumentation-otel-demo.yaml"
     if (Test-Path $instrumentationManifest) {
         # Read manifest and replace connection string placeholder
         $instrumentationContent = Get-Content $instrumentationManifest -Raw
-        $instrumentationContent = $instrumentationContent -replace '__APP_INSIGHTS_CONNECTION_STRING__', $appInsightsConnectionString
+        $instrumentationContent = $instrumentationContent -replace '__APP_INSIGHTS_CONNECTION_STRING__', $aksAppInsightsConnectionString
         
         $tempInstrumentationFile = Join-Path ([System.IO.Path]::GetTempPath()) "instrumentation-otel-demo-$([System.Guid]::NewGuid().ToString('N')).yaml"
         $instrumentationContent | Set-Content -Path $tempInstrumentationFile -NoNewline
@@ -356,11 +371,100 @@ if (-not $SkipAKS) {
     } else {
         Write-Warning "Instrumentation manifest not found: $instrumentationManifest. Skipping Azure Monitor app monitoring setup."
     }
+
+    # Associate managed DCR with AKS cluster for OTLP collection
+    Write-Host "  → Associating managed DCR with AKS cluster for OTLP collection" -ForegroundColor Yellow
+    try {
+        # Get the Application Insights resource to find the managed DCR
+        $aksAppInsightsResourceId = az monitor app-insights component show --app $aksAppInsightsApplicationId --query id -o tsv 2>$null
+        
+        if ($aksAppInsightsResourceId) {
+            Write-Host "    Discovering managed resource group and DCR for Application Insights..." -ForegroundColor Gray
+            
+            # Query all resource groups to find the one managed by this App Insights
+            # Managed resource groups typically have the App Insights resource ID in their tags or properties
+            $allResourceGroups = az group list -o json 2>$null | ConvertFrom-Json
+            $managedResourceGroup = $null
+            
+            foreach ($rg in $allResourceGroups) {
+                # Check if this RG is managed (has managedBy property pointing to the App Insights resource)
+                if ($rg.managedBy -eq $aksAppInsightsResourceId) {
+                    $managedResourceGroup = $rg.name
+                    Write-Host "    Found managed resource group: $managedResourceGroup" -ForegroundColor Gray
+                    break
+                }
+            }
+            
+            $managedDcrId = $null
+            
+            if ($managedResourceGroup) {
+                # Find the managed DCR in the managed resource group
+                $managedDcrId = az monitor data-collection rule list --resource-group $managedResourceGroup --query "[?contains(name, 'managed')].id" -o tsv 2>$null
+                if ($managedDcrId) {
+                    Write-Host "    Found managed DCR in resource group: $managedDcrId" -ForegroundColor Gray
+                }
+            }
+            
+            # Fallback: If we didn't find it via managed RG, search all DCRs for one with this App Insights as destination
+            if (-not $managedDcrId) {
+                Write-Host "    Searching all DCRs for managed DCR..." -ForegroundColor Gray
+                $allDcrs = az monitor data-collection rule list -o json 2>$null | ConvertFrom-Json
+                
+                foreach ($dcr in $allDcrs) {
+                    # Look for DCR with "managed" in name and associated with this App Insights
+                    if ($dcr.name -match 'managed' -and $dcr.destinations.applicationInsights) {
+                        foreach ($aiDest in $dcr.destinations.applicationInsights.PSObject.Properties) {
+                            if ($aiDest.Value.applicationInsightsId -eq $aksAppInsightsResourceId) {
+                                $managedDcrId = $dcr.id
+                                Write-Host "    Found managed DCR: $($dcr.name)" -ForegroundColor Gray
+                                break
+                            }
+                        }
+                        if ($managedDcrId) { break }
+                    }
+                }
+            }
+            
+            if ($managedDcrId) {
+                # Get AKS cluster resource ID
+                $aksResourceId = az aks show --name $aksClusterName --resource-group $resourceGroup --query id -o tsv
+                
+                # Check if association already exists
+                $existingAssociation = az monitor data-collection rule association list --resource $aksResourceId --query "[?dataCollectionRuleId=='$managedDcrId'].name" -o tsv 2>$null
+                
+                if (-not $existingAssociation) {
+                    Write-Host "    Creating DCR association: $managedDcrId" -ForegroundColor Gray
+                    az monitor data-collection rule association create `
+                        --name "ManagedBackendServicesDCRAssociation" `
+                        --resource $aksResourceId `
+                        --rule-id $managedDcrId `
+                        --output none
+                    Write-Host "    ✓ DCR association created successfully" -ForegroundColor Green
+                    
+                    # Restart ama-logs to pick up the DCR configuration
+                    Write-Host "    Restarting ama-logs daemonset to enable OTLP receivers..." -ForegroundColor Gray
+                    kubectl rollout restart daemonset/ama-logs -n kube-system | Out-Null
+                    Write-Host "    ✓ ama-logs restarted" -ForegroundColor Green
+                } else {
+                    Write-Host "    DCR association already exists, skipping" -ForegroundColor Gray
+                }
+            } else {
+                Write-Warning "  Could not find managed DCR for Application Insights. OTLP collection may not work."
+            }
+        } else {
+            Write-Warning "  Could not find Application Insights resource. OTLP collection may not work."
+        }
+    } catch {
+        Write-Warning "  Failed to associate managed DCR with AKS cluster: $_"
+    }
     
     # Create Kubernetes secret with connection strings
     Write-Host "  → Creating secrets" -ForegroundColor Yellow
+    # Note: Most AKS services only need ApplicationId for resource attribute (not full connection string)
+    # Order Service is an exception - it needs full connection string for Java auto-instrumentation
     $secretData = @{
-        "application-insights-connection-string" = $appInsightsConnectionString
+        "application-insights-application-id" = $aksAppInsightsApplicationId
+        "application-insights-connection-string" = $aksAppInsightsConnectionString
         "spring-datasource-url" = "jdbc:sqlserver://$($sqlParts['Server']):1433;database=$($sqlParts['Database']);encrypt=true;trustServerCertificate=true;"
         "spring-datasource-username" = $sqlParts['User Id']
         "spring-datasource-password" = $sqlParts['Password']
@@ -502,10 +606,12 @@ if (-not $SkipVmDeployment) {
         "PORT" = "3001"
         "SERVICE_NAME" = "inventory-service"
         "SERVICE_VERSION" = "1.0.0"
-        "APPLICATIONINSIGHTS_CONNECTION_STRING" = $appInsightsConnectionString
-        "APPLICATION_INSIGHTS_APPLICATION_ID" = $appInsightsApplicationId
+        "APPLICATION_INSIGHTS_APPLICATION_ID" = $vmAppInsightsApplicationId
         "REDIS_URL" = $redisUrl
         "OTEL_EXPORTER_OTLP_ENDPOINT" = "http://localhost:4319"
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" = "http://localhost:4319"
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" = "http://localhost:4317"
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" = "http://localhost:4319"
     }))
 
     # VM2: API Gateway (will connect to AKS-hosted services)
@@ -526,8 +632,7 @@ if (-not $SkipVmDeployment) {
     $apiGatewayEnv = @{
         "ASPNETCORE_ENVIRONMENT" = "Production"
         "ASPNETCORE_URLS" = "http://+:5000"
-        "ApplicationInsights__ConnectionString" = $appInsightsConnectionString
-        "APPLICATION_INSIGHTS_APPLICATION_ID" = $appInsightsApplicationId
+        "APPLICATION_INSIGHTS_APPLICATION_ID" = $vmAppInsightsApplicationId
         "Redis__ConnectionString" = $connectionStrings.redis
         "EventHub__ConnectionString" = $connectionStrings.eventhub_orders
         "EventHub__Name" = "orders"
@@ -537,6 +642,9 @@ if (-not $SkipVmDeployment) {
         "Services__EventProcessor__BaseUrl" = $aksEventProcessorUrl
         "FailureInjection__Enabled" = "false"
         "OTEL_EXPORTER_OTLP_ENDPOINT" = "http://localhost:4319"
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" = "http://localhost:4319"
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" = "http://localhost:4317"
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT" = "http://localhost:4319"
     }
     
     # Add notification service URL if enabled
@@ -865,6 +973,43 @@ if ($frontendUrls) {
     } else {
         Write-Host ("  - {0}" -f $frontendUrls)
     }
+}
+
+# Configure kubectl and AKS RBAC permissions
+Write-Step "Configuring kubectl and AKS RBAC permissions"
+
+Write-Host "  → Getting AKS admin credentials for kubectl" -ForegroundColor Yellow
+az aks get-credentials `
+    --resource-group $resourceGroupName `
+    --name $aksClusterName `
+    --overwrite-existing `
+    --admin 2>&1 | Out-Null
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "    ✓ kubectl configured with admin credentials" -ForegroundColor Green
+} else {
+    Write-Warning "Failed to configure kubectl credentials"
+}
+
+Write-Host "  → Granting Azure Kubernetes Service Cluster User Role for portal access" -ForegroundColor Yellow
+try {
+    $currentUserId = az ad signed-in-user show --query id -o tsv
+    if ($currentUserId) {
+        $aksScope = "/subscriptions/$((az account show --query id -o tsv))/resourceGroups/$resourceGroupName/providers/Microsoft.ContainerService/managedClusters/$aksClusterName"
+        
+        az role assignment create `
+            --role "Azure Kubernetes Service Cluster User Role" `
+            --assignee $currentUserId `
+            --scope $aksScope 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "    ✓ AKS Cluster User Role assigned (you can now view namespaces in Azure Portal)" -ForegroundColor Green
+        } else {
+            Write-Warning "Role may already be assigned or failed to assign"
+        }
+    }
+} catch {
+    Write-Warning "Failed to assign AKS role: $_"
 }
 
 Write-Host "`nAll tasks complete." -ForegroundColor Green

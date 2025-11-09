@@ -12,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 // OpenTelemetry Configuration
 var serviceName = "payment-service";
 var serviceVersion = "1.0.0";
+var applicationId = Environment.GetEnvironmentVariable("APPLICATION_INSIGHTS_APPLICATION_ID") ?? "unknown";
 
 // Read OTLP endpoints from environment (injected by Azure Monitor)
 var otlpTracesEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
@@ -25,7 +26,8 @@ builder.Services.AddOpenTelemetry()
         {
             ["deployment.environment"] = builder.Environment.EnvironmentName,
             ["deployment.platform"] = "kubernetes",
-            ["deployment.cloud"] = "azure"
+            ["deployment.cloud"] = "azure",
+            ["microsoft.applicationId"] = applicationId
         }))
     .WithTracing(tracing =>
     {

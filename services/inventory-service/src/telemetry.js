@@ -5,11 +5,10 @@ const { Resource } = require('@opentelemetry/resources');
 const { SemanticResourceAttributes } = require('@opentelemetry/semantic-conventions');
 const { BatchSpanProcessor, ConsoleSpanExporter } = require('@opentelemetry/sdk-trace-node');
 const { PeriodicExportingMetricReader, ConsoleMetricExporter } = require('@opentelemetry/sdk-metrics');
-const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
-const { OTLPMetricExporter } = require('@opentelemetry/exporter-metrics-otlp-http');
-const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-http');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-grpc');
+const { OTLPMetricExporter } = require('@opentelemetry/exporter-metrics-otlp-grpc');
+const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-grpc');
 const { BatchLogRecordProcessor, ConsoleLogRecordExporter } = require('@opentelemetry/sdk-logs');
-const { AzureMonitorTraceExporter } = require('@azure/monitor-opentelemetry-exporter');
 
 // Service configuration
 const serviceName = process.env.SERVICE_NAME || 'inventory-service';
@@ -31,22 +30,24 @@ const resource = new Resource({
   'microsoft.applicationId': applicationId
 });
 
-// Configure OTLP exporters
-const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
+// Configure OTLP exporters with gRPC
+const otlpTracesEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || 'localhost:4319';
+const otlpMetricsEndpoint = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT || 'localhost:4317';
+const otlpLogsEndpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || 'localhost:4319';
 const otlpHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS || '';
 
 const otlpTraceExporter = new OTLPTraceExporter({
-  url: `${otlpEndpoint}/v1/traces`,
+  url: otlpTracesEndpoint,
   headers: otlpHeaders ? JSON.parse(otlpHeaders) : {}
 });
 
 const otlpMetricExporter = new OTLPMetricExporter({
-  url: `${otlpEndpoint}/v1/metrics`,
+  url: otlpMetricsEndpoint,
   headers: otlpHeaders ? JSON.parse(otlpHeaders) : {}
 });
 
 const otlpLogExporter = new OTLPLogExporter({
-  url: `${otlpEndpoint}/v1/logs`,
+  url: otlpLogsEndpoint,
   headers: otlpHeaders ? JSON.parse(otlpHeaders) : {}
 });
 
@@ -61,16 +62,6 @@ const traceProcessors = [
 // Add console exporter in development
 if (environment === 'development') {
   traceProcessors.push(new BatchSpanProcessor(new ConsoleSpanExporter()));
-}
-
-// Add Azure Monitor exporter if connection string is provided
-const azureConnectionString = process.env.APPLICATIONINSIGHTS_CONNECTION_STRING;
-if (azureConnectionString) {
-  console.log('Azure Monitor exporter configured');
-  const azureMonitorExporter = new AzureMonitorTraceExporter({
-    connectionString: azureConnectionString
-  });
-  traceProcessors.push(new BatchSpanProcessor(azureMonitorExporter));
 }
 
 // Configure metric readers
@@ -181,7 +172,9 @@ try {
   console.log(`   Service: ${serviceName}`);
   console.log(`   Version: ${serviceVersion}`);
   console.log(`   Environment: ${environment}`);
-  console.log(`   OTLP Endpoint: ${otlpEndpoint}`);
+  console.log(`   OTLP Traces Endpoint: ${otlpTracesEndpoint}`);
+  console.log(`   OTLP Metrics Endpoint: ${otlpMetricsEndpoint}`);
+  console.log(`   OTLP Logs Endpoint: ${otlpLogsEndpoint}`);
   console.log(`   Azure Monitor: ${azureConnectionString ? 'Enabled' : 'Disabled'}`);
 } catch (error) {
   console.error('❌ Error initializing OpenTelemetry SDK:', error);

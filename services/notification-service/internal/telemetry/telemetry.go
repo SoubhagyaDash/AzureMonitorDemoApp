@@ -146,6 +146,10 @@ func InitTelemetry(cfg *config.Config) (func(context.Context) error, error) {
 // newResource creates a resource with comprehensive service attributes
 func newResource(cfg *config.Config) (*resource.Resource, error) {
 	hostname, _ := os.Hostname()
+	applicationId := os.Getenv("APPLICATION_INSIGHTS_APPLICATION_ID")
+	if applicationId == "" {
+		applicationId = "unknown"
+	}
 	
 	// First, get the default resource which includes OTEL_RESOURCE_ATTRIBUTES from environment
 	defaultRes := resource.Default()
@@ -171,6 +175,7 @@ func newResource(cfg *config.Config) (*resource.Resource, error) {
 		attribute.String("service.namespace", "otel-demo"),
 		attribute.String("service.component", "notification-service"),
 		attribute.String("service.description", "Real-time notification service with Event Hub and WebSocket"),
+		attribute.String("microsoft.applicationId", applicationId),
 	)
 	
 	// Merge with service attributes taking precedence (listed second)
