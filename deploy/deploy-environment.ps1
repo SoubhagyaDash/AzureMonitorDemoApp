@@ -19,7 +19,7 @@ loaded from Terraform outputs at execution time and never written to disk.
 param(
     [string]$VarFile,
     [string]$DockerTag = "latest",
-    [string]$AppInsightsConnectionString,
+    [Parameter(Mandatory=$true)]
     [string]$AksAppInsightsConnectionString,
     [switch]$SkipInfrastructure,
     [switch]$SkipContainers,
@@ -178,8 +178,8 @@ $acrLoginServer = $terraformOutput.acr_login_server.value
 $acrAdminUsername = $terraformOutput.acr_admin_username.value
 $acrAdminPassword = $terraformOutput.acr_admin_password.value
 
-# Frontend: Full connection string for Browser SDK
-$frontendAppInsightsConnectionString = if ($AppInsightsConnectionString) { $AppInsightsConnectionString } else { $terraformOutput.application_insights_connection_string.value }
+# Frontend, VMs, and Function App: Use Terraform-created App Insights
+$frontendAppInsightsConnectionString = $terraformOutput.application_insights_connection_string.value
 
 # VM Services: Extract Application ID for microsoft.applicationId resource attribute (telemetry goes through OTLP->AMA->DCR)
 $vmAppInsightsApplicationId = if ($frontendAppInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
@@ -189,8 +189,8 @@ $vmAppInsightsApplicationId = if ($frontendAppInsightsConnectionString -match 'A
     $terraformOutput.application_insights_application_id.value
 }
 
-# AKS Services: Full connection string for Instrumentation CR (Java auto-instrumentation), and extract Application ID for other services
-$aksAppInsightsConnectionString = if ($AksAppInsightsConnectionString) { $AksAppInsightsConnectionString } else { $frontendAppInsightsConnectionString }
+# AKS Services: Use the provided AKS-specific App Insights connection string
+$aksAppInsightsConnectionString = $AksAppInsightsConnectionString
 $aksAppInsightsApplicationId = if ($aksAppInsightsConnectionString -match 'ApplicationId=([a-f0-9\-]+)') {
     $matches[1]
 } else {
@@ -253,8 +253,9 @@ $apiGatewayUrl = if ($serviceEndpoints.api_gateway_private_url -and $serviceEndp
 } else { $null }
 $acrPasswordBase64 = if ($acrAdminPassword) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($acrAdminPassword)) } else { $null }
 
+# Extract instrumentation key from frontend App Insights (used for legacy scenarios if needed)
 $instrumentationKey = ""
-if ($appInsightsConnectionString -match "InstrumentationKey=([^;]+)") {
+if ($frontendAppInsightsConnectionString -match "InstrumentationKey=([^;]+)") {
     $instrumentationKey = $Matches[1]
 }
 
@@ -789,9 +790,9 @@ if ($frontendWebAppName) {
     # DO NOT set ORDER_SERVICE_URL, PAYMENT_SERVICE_URL, EVENT_PROCESSOR_URL
     # Frontend should route all order/payment requests through API Gateway
     
-    # Add Application Insights for frontend telemetry
-    if ($appInsightsConnectionString) {
-        $frontendAppSettings["APPLICATIONINSIGHTS_CONNECTION_STRING"] = $appInsightsConnectionString
+    # Add Application Insights for frontend telemetry (using Terraform-created App Insights)
+    if ($frontendAppInsightsConnectionString) {
+        $frontendAppSettings["APPLICATIONINSIGHTS_CONNECTION_STRING"] = $frontendAppInsightsConnectionString
     }
     
     # VNet integration settings
