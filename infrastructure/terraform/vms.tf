@@ -35,6 +35,18 @@ resource "azurerm_linux_virtual_machine" "vm" {
   size                = var.vm_size
   admin_username      = var.admin_username
 
+  # Skip Linux Azure Security Pack to avoid conflicts with Azure Monitor Agent
+  plan {
+    name                   = "20_04-lts-gen2"
+    publisher              = "Canonical"
+    product                = "0001-com-ubuntu-server-focal"
+    SkipLinuxAzSecPack     = true
+  }
+
+  additional_capabilities {
+    ultra_ssd_enabled = false
+  }
+
   # Support both password and SSH key authentication
   # Password is kept for emergency access, but SSH key is preferred
   disable_password_authentication = false
@@ -90,6 +102,30 @@ resource "azurerm_virtual_machine_extension" "vm_init" {
   })
 
   tags = var.tags
+}
+
+# Azure Monitor Linux Agent Extension
+resource "azurerm_virtual_machine_extension" "azure_monitor_agent" {
+  count                      = var.vm_count
+  name                       = "AzureMonitorLinuxAgent"
+  virtual_machine_id         = azurerm_linux_virtual_machine.vm[count.index].id
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                       = "AzureMonitorLinuxAgent"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+
+  settings = jsonencode({
+    azureMonitorConfiguration = {
+      enable = true
+    }
+    genevaConfiguration = {
+      enable = false
+    }
+  })
+
+  tags = var.tags
+
+  depends_on = [azurerm_virtual_machine_extension.vm_init]
 }
 
 # Load Balancer for VMs

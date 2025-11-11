@@ -175,7 +175,6 @@ try {
   console.log(`   OTLP Traces Endpoint: ${otlpTracesEndpoint}`);
   console.log(`   OTLP Metrics Endpoint: ${otlpMetricsEndpoint}`);
   console.log(`   OTLP Logs Endpoint: ${otlpLogsEndpoint}`);
-  console.log(`   Azure Monitor: ${azureConnectionString ? 'Enabled' : 'Disabled'}`);
 } catch (error) {
   console.error('❌ Error initializing OpenTelemetry SDK:', error);
 }

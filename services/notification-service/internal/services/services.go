@@ -195,7 +195,10 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 				}
 				
 				// Extract context and create span as child of upstream context
+				// Application Insights uses operation_ParentId for Application Map correlation
 				eventCtx := propagator.Extract(ctx, carrier)
+				upstreamSpanContext := trace.SpanContextFromContext(eventCtx)
+				
 				_, span := telemetry.Tracer.Start(eventCtx, "eventhub.receive",
 					trace.WithSpanKind(trace.SpanKindConsumer),
 					trace.WithAttributes(
@@ -205,6 +208,15 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 						attribute.String("partition.id", partitionID),
 					),
 				)
+				
+				// CRITICAL: Set Azure Monitor correlation attributes explicitly
+				// This ensures Application Map can connect services through EventHub
+				if upstreamSpanContext.IsValid() {
+					span.SetAttributes(
+						attribute.String("ai.operation.id", upstreamSpanContext.TraceID().String()),
+						attribute.String("ai.operation.parentId", upstreamSpanContext.SpanID().String()),
+					)
+				}
 
 				// Call the handler
 				if err := handler(event.Body); err != nil {

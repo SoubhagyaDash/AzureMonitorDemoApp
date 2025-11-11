@@ -55,12 +55,17 @@ public class EventHubService : IEventHubService
             // Use Diagnostic-Id for compatibility with Azure SDKs
             if (activity != null)
             {
+                // W3C Trace Context (primary)
                 eventHubEvent.Properties.Add("Diagnostic-Id", activity.Id);
                 eventHubEvent.Properties.Add("traceparent", activity.Id);
                 if (!string.IsNullOrEmpty(activity.TraceStateString))
                 {
                     eventHubEvent.Properties.Add("tracestate", activity.TraceStateString);
                 }
+                
+                // Application Insights correlation IDs for legacy support
+                eventHubEvent.Properties.Add("Request-Id", activity.Id);
+                eventHubEvent.Properties.Add("x-ms-request-id", activity.TraceId.ToString());
             }
             
             if (!eventDataBatch.TryAdd(eventHubEvent))

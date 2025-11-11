@@ -62,12 +62,17 @@ public class EventHubService : IEventHubService
             // Inject distributed tracing context into EventHub message properties
             if (activity != null)
             {
+                // W3C Trace Context (primary)
                 eventDataInstance.Properties["Diagnostic-Id"] = activity.Id;
                 eventDataInstance.Properties["traceparent"] = activity.Id;
                 if (!string.IsNullOrEmpty(activity.TraceStateString))
                 {
                     eventDataInstance.Properties["tracestate"] = activity.TraceStateString;
                 }
+                
+                // Application Insights correlation IDs for legacy support
+                eventDataInstance.Properties["Request-Id"] = activity.Id;
+                eventDataInstance.Properties["x-ms-request-id"] = activity.TraceId.ToString();
             }
 
             using var eventBatch = await _producerClient.CreateBatchAsync();
@@ -114,12 +119,17 @@ public class EventHubService : IEventHubService
             // Inject distributed tracing context into EventHub message properties
             if (activity != null)
             {
+                // W3C Trace Context (primary)
                 eventDataInstance.Properties["Diagnostic-Id"] = activity.Id;
                 eventDataInstance.Properties["traceparent"] = activity.Id;
                 if (!string.IsNullOrEmpty(activity.TraceStateString))
                 {
                     eventDataInstance.Properties["tracestate"] = activity.TraceStateString;
                 }
+                
+                // Application Insights correlation IDs for legacy support
+                eventDataInstance.Properties["Request-Id"] = activity.Id;
+                eventDataInstance.Properties["x-ms-request-id"] = activity.TraceId.ToString();
             }
 
             using var eventBatch = await _producerClient.CreateBatchAsync();
@@ -160,12 +170,17 @@ public class EventHubService : IEventHubService
             // Inject distributed tracing context into EventHub message properties
             if (activity != null)
             {
+                // W3C Trace Context (primary)
                 eventDataInstance.Properties["Diagnostic-Id"] = activity.Id;
                 eventDataInstance.Properties["traceparent"] = activity.Id;
                 if (!string.IsNullOrEmpty(activity.TraceStateString))
                 {
                     eventDataInstance.Properties["tracestate"] = activity.TraceStateString;
                 }
+                
+                // Application Insights correlation IDs for legacy support
+                eventDataInstance.Properties["Request-Id"] = activity.Id;
+                eventDataInstance.Properties["x-ms-request-id"] = activity.TraceId.ToString();
             }
 
             using var eventBatch = await _producerClient.CreateBatchAsync();

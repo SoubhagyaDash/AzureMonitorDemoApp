@@ -297,12 +297,25 @@ class EventProcessor:
                 carrier["tracestate"] = event.properties["tracestate"]
         
         # Extract context and start span as child of upstream context
+        # Application Insights uses operation_ParentId for Application Map correlation
         ctx = propagator.extract(carrier=carrier)
+        upstream_span_context = trace.get_current_span(ctx).get_span_context()
         
         with tracer.start_as_current_span("eventhub.receive", context=ctx) as receive_span:
             receive_span.set_attribute("messaging.system", "eventhub")
             receive_span.set_attribute("messaging.destination", config.EVENT_HUB_NAME)
             receive_span.set_attribute("messaging.operation", "receive")
+            
+            # CRITICAL: Set Azure Monitor correlation attributes explicitly
+            # This ensures Application Map can connect payment-service -> event-processor
+            if upstream_span_context.is_valid:
+                # Extract trace ID and span ID from upstream context
+                trace_id = format(upstream_span_context.trace_id, '032x')
+                parent_span_id = format(upstream_span_context.span_id, '016x')
+                
+                # Set AI-specific attributes for proper correlation
+                receive_span.set_attribute("ai.operation.id", trace_id)
+                receive_span.set_attribute("ai.operation.parentId", parent_span_id)
             
             with tracer.start_as_current_span("process_single_event") as span:
                 try:
