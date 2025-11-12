@@ -152,12 +152,12 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 	// Add event details to span
 	span.SetAttributes(
 		attribute.String("event.type", event.EventType),
-		attribute.String("order.id", event.OrderID),
+		attribute.Int("order.id", event.OrderID),
 		attribute.String("customer.id", event.CustomerID),
 		attribute.Float64("order.total_amount", event.TotalAmount),
 	)
 
-	log.Printf("Processing %s event for Order ID: %s, Customer ID: %s", 
+	log.Printf("Processing %s event for Order ID: %d, Customer ID: %s", 
 		event.EventType, event.OrderID, event.CustomerID)
 
 	// Create notification based on event type
@@ -173,7 +173,7 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 			"orderId":     event.OrderID,
 			"customerId":  event.CustomerID,
 			"subject":     "Order Confirmed",
-			"message":     fmt.Sprintf("Your order #%s has been confirmed! Total: $%.2f", event.OrderID, event.TotalAmount),
+			"message":     fmt.Sprintf("Your order #%d has been confirmed! Total: $%.2f", event.OrderID, event.TotalAmount),
 			"totalAmount": event.TotalAmount,
 			"productId":   event.ProductID,
 			"quantity":    event.Quantity,
@@ -186,7 +186,7 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 			"orderId":    event.OrderID,
 			"customerId": event.CustomerID,
 			"subject":    "Order Status Update",
-			"message":    fmt.Sprintf("Order #%s status: %s", event.OrderID, event.Status),
+			"message":    fmt.Sprintf("Order #%d status: %s", event.OrderID, event.Status),
 			"status":     event.Status,
 			"timestamp":  event.Timestamp,
 		}
@@ -197,7 +197,7 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 			"orderId":     event.OrderID,
 			"customerId":  event.CustomerID,
 			"subject":     "Payment Processed",
-			"message":     fmt.Sprintf("Payment of $%.2f processed for order #%s", event.TotalAmount, event.OrderID),
+			"message":     fmt.Sprintf("Payment of $%.2f processed for order #%d", event.TotalAmount, event.OrderID),
 			"totalAmount": event.TotalAmount,
 			"timestamp":   event.Timestamp,
 		}
@@ -209,7 +209,7 @@ func (h *NotificationHandler) ProcessEventHubMessage(message []byte) error {
 			"orderId":    event.OrderID,
 			"customerId": event.CustomerID,
 			"subject":    "Order Update",
-			"message":    fmt.Sprintf("Update for order #%s", event.OrderID),
+			"message":    fmt.Sprintf("Update for order #%d", event.OrderID),
 			"eventType":  event.EventType,
 			"timestamp":  event.Timestamp,
 		}

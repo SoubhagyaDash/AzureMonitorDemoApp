@@ -237,7 +237,7 @@ func (e *EventHubService) processPartition(ctx context.Context, partitionID stri
 // OrderEvent represents an order event from Event Hub
 type OrderEvent struct {
 	EventType   string    `json:"EventType"`
-	OrderID     string    `json:"OrderId"`
+	OrderID     int       `json:"OrderId"`
 	CustomerID  string    `json:"CustomerId"`
 	ProductID   int       `json:"ProductId"`
 	Quantity    int       `json:"Quantity"`

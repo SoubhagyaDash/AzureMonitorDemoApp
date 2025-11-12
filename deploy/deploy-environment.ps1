@@ -377,7 +377,8 @@ if (-not $SkipAKS) {
     Write-Host "  → Associating managed DCR with AKS cluster for OTLP collection" -ForegroundColor Yellow
     try {
         # Get the Application Insights resource to find the managed DCR
-        $aksAppInsightsResourceId = az monitor app-insights component show --app $aksAppInsightsApplicationId --query id -o tsv 2>$null
+        # Query by ApplicationId property since we only have the Application ID from connection string
+        $aksAppInsightsResourceId = az resource list --resource-group $resourceGroup --resource-type "Microsoft.Insights/components" --query "[?properties.ApplicationId=='$aksAppInsightsApplicationId'].id" -o tsv 2>$null
         
         if ($aksAppInsightsResourceId) {
             Write-Host "    Discovering managed resource group and DCR for Application Insights..." -ForegroundColor Gray
@@ -602,7 +603,7 @@ if (-not $SkipVmDeployment) {
     
     # VM1: Inventory Service
     $vmServiceMap[$inventoryVmIndex] = New-Object System.Collections.Generic.List[object]
-    $vmServiceMap[$inventoryVmIndex].Add((New-ServiceConfig -Name "inventory-service" -Image "$containerImagePrefix/inventory-service:$DockerTag" -Ports @("3001:3001") -Environment @{
+    $vmServiceMap[$inventoryVmIndex].Add((New-ServiceConfig -Name "inventory-service" -Image "$containerImagePrefix/inventory-service:$DockerTag" -UseHostNetwork $true -Environment @{
         "NODE_ENV" = "production"
         "PORT" = "3001"
         "SERVICE_NAME" = "inventory-service"
